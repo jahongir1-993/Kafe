@@ -7,6 +7,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
 :root{--bg:#f3f5f4;--card:#fff;--ink:#16211d;--mute:#6b7a74;--line:#dfe5e2;--acc:#0f7a5c;--accink:#fff;--bad:#c4412f;color-scheme:light}
 @media(prefers-color-scheme:dark){:root{--bg:#101614;--card:#18211e;--ink:#e8efec;--mute:#92a29b;--line:#2a3733;--acc:#2fb88f;--accink:#04140e;--bad:#ef7967;color-scheme:dark}}
@@ -46,163 +47,176 @@ input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px
 .empty{text-align:center;color:var(--mute);padding:18px 8px}
 .msg{padding:24px;text-align:center}
 @media(prefers-reduced-motion:no-preference){.btn:active,.item:active{transform:scale(.98)}}
-</style>
+.chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:8px}.chips button{flex:none;padding:8px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:14px}.chips button.on{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:700}.item img,.th{width:100%;height:70px;object-fit:cover;border-radius:6px;margin-bottom:6px;background:var(--bg)}.th{width:48px;height:48px;margin:0}.qi{width:64px;margin:0;padding:6px;text-align:center}.login{max-width:340px;margin:auto;padding:24px 12px}</style>
 </head>
 <body>
 <main id="view"></main>
 <nav id="nav"></nav>
 <script>
-// 1) Firebase sozlamasini shu yerga qo'ying (Firebase > Project settings > Your apps > Web)
 const FIREBASE_CONFIG = { apiKey:"AIzaSyCkdVVeE9og--yoLMRoBWWw7dAgcNaVqKY", authDomain:"kafe-pos-94dfb.firebaseapp.com", projectId:"kafe-pos-94dfb", appId:"1:780619577621:web:30beb98f9a7eaaa997d11c" };
-// 2) Faqat sizlar kirishi uchun Telegram ID'laringizni yozing, masalan [12345678, 87654321]. Bo'sh bo'lsa hamma kira oladi.
-const ALLOWED_IDS = [];
-
-const tg = window.Telegram && Telegram.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
-const myId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null;
-const $ = s => document.querySelector(s);
-const view = $('#view');
-const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money = n => Math.round(n).toLocaleString('ru-RU') + " so'm";
+const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
+const $ = s => document.querySelector(s), view = $('#view');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => Math.round(n || 0).toLocaleString('ru-RU') + " so'm";
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
 const ask = (m, cb) => tg && tg.showConfirm ? tg.showConfirm(m, ok => ok && cb()) : (confirm(m) && cb());
 const note = m => tg && tg.showAlert ? tg.showAlert(m) : alert(m);
+const val = id => $('#' + id).value.trim();
+const mail = l => l.toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@kafe.app';
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore.FieldValue, TS = firebase.firestore.Timestamp;
+const S = { me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pay: 'naqd', cat: '', day: today(), tab: '', edit: null, img: '' };
+const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['xar','Xarajat'],['hisob','Hisobot'],['xod','Xodim']], kassir: [['kassa','Kassa']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
+let unsubs = [], dayUnsubs = [];
 
-if (!FIREBASE_CONFIG.projectId) {
-  view.innerHTML = '<div class="msg"><h2>Sozlash kerak</h2><p class="mute">Faylning boshidagi FIREBASE_CONFIG ga Firebase sozlamalarini yozing.</p></div>';
-} else if (ALLOWED_IDS.length && !ALLOWED_IDS.includes(myId)) {
-  view.innerHTML = '<div class="msg"><h2>Ruxsat yo\'q</h2><p class="mute">Bu ilova faqat egalari uchun.</p></div>';
-} else { start(); }
-
-function start() {
-  firebase.initializeApp(FIREBASE_CONFIG);
-  const db = firebase.firestore();
-  const FV = firebase.firestore.FieldValue;
-  let products = [], sales = [], expenses = [], cart = {}, pay = 'naqd', tab = 'sell', day = today(), unsubDay = [];
-
-  const tabs = [['sell','Savdo'],['goods','Tovarlar'],['exp','Xarajat'],['rep','Hisobot']];
-  $('#nav').innerHTML = tabs.map(t => `<button data-t="${t[0]}">${t[1]}</button>`).join('');
-  $('#nav').onclick = e => { const t = e.target.dataset.t; if (t) show(t); };
-
-  db.collection('products').orderBy('name').onSnapshot(s => {
-    products = s.docs.map(d => ({ id: d.id, ...d.data() }));
-    refresh();
-  }, err => note('Baza xatosi: ' + err.message));
-
-  function listenDay() {
-    unsubDay.forEach(u => u()); unsubDay = [];
-    const a = new Date(day + 'T00:00:00'), b = new Date(a.getTime() + 864e5);
-    const q = c => db.collection(c).where('ts', '>=', a).where('ts', '<', b).orderBy('ts', 'desc');
-    unsubDay.push(q('sales').onSnapshot(s => { sales = s.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }));
-    unsubDay.push(q('expenses').onSnapshot(s => { expenses = s.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }));
-  }
-
-  function show(t) {
-    tab = t;
-    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-    const views = {
-      sell: '<h2>Savdo</h2><div id="grid" class="grid"></div><div id="cart" class="card"></div>',
-      goods: `<h2>Yangi tovar</h2><div class="card"><input id="gn" placeholder="Nomi (masalan, Cappuccino)"><div class="row"><input id="gp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="gc" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="gs" type="number" inputmode="decimal" placeholder="Qoldiq (soni)"><button class="btn" id="gadd">Tovar qo'shish</button></div><h2>Tovarlar</h2><div id="glist"></div>`,
-      exp: `<h2>Yangi xarajat</h2><div class="card"><input id="en" placeholder="Nima uchun (masalan, Sut xaridi)"><input id="ea" type="number" inputmode="decimal" placeholder="Summa"><button class="btn" id="eadd">Xarajat qo'shish</button></div><h2>Bugungi xarajatlar</h2><div id="elist"></div>`,
-      rep: `<div class="between"><h2>Hisobot</h2></div><input id="rd" type="date" value="${day}"><div id="rbox"></div>`
-    };
-    view.innerHTML = views[t];
-    if (t === 'goods') $('#gadd').onclick = addGood;
-    if (t === 'exp') { $('#eadd').onclick = addExp; if (day !== today()) { day = today(); listenDay(); } }
-    if (t === 'rep') $('#rd').onchange = e => { day = e.target.value || today(); listenDay(); };
-    if (t === 'sell' && day !== today()) { day = today(); listenDay(); }
-    refresh();
-  }
-
-  function refresh() {
-    ({ sell: drawSell, goods: drawGoods, exp: drawExp, rep: drawRep })[tab]();
-  }
-
-  // ---- SAVDO
-  function drawSell() {
-    const g = $('#grid'); if (!g) return;
-    g.innerHTML = products.length ? products.map(p => {
-      const q = cart[p.id] || 0, out = (p.stock || 0) <= q;
-      return `<button class="item ${q ? 'in' : ''}" data-add="${p.id}" ${out ? 'disabled' : ''}><b>${esc(p.name)}</b>${money(p.price)}<br><small>Qoldiq: ${p.stock || 0}${q ? ' · savatda ' + q : ''}</small></button>`;
-    }).join('') : '<div class="empty" style="grid-column:1/-1">Avval "Tovarlar" bo\'limida tovar qo\'shing.</div>';
-    g.onclick = e => { const b = e.target.closest('[data-add]'); if (b) { cart[b.dataset.add] = (cart[b.dataset.add] || 0) + 1; drawSell(); } };
-    const ids = Object.keys(cart).filter(id => products.some(p => p.id === id));
-    const total = ids.reduce((s, id) => s + cart[id] * products.find(p => p.id === id).price, 0);
-    const c = $('#cart');
-    c.innerHTML = ids.length ? ids.map(id => {
-      const p = products.find(x => x.id === id);
-      return `<div class="between" style="margin-bottom:8px"><div><b>${esc(p.name)}</b><div class="mute">${money(p.price * cart[id])}</div></div><div class="qty"><button data-m="${id}" aria-label="Kamaytirish">−</button><b>${cart[id]}</b><button data-p="${id}" aria-label="Ko'paytirish" ${(p.stock||0) <= cart[id] ? 'disabled' : ''}>+</button></div></div>`;
-    }).join('') + `<div class="seg"><button data-pay="naqd" class="${pay==='naqd'?'on':''}">Naqd</button><button data-pay="karta" class="${pay==='karta'?'on':''}">Karta</button></div><div class="between" style="margin-bottom:8px"><span>Jami</span><span class="big">${money(total)}</span></div><button class="btn" id="sellbtn">Sotish</button>` : '<div class="empty">Savat bo\'sh. Tovarni bosib qo\'shing.</div>';
-    c.onclick = e => {
-      const t = e.target;
-      if (t.dataset.m) { cart[t.dataset.m]--; if (cart[t.dataset.m] <= 0) delete cart[t.dataset.m]; drawSell(); }
-      else if (t.dataset.p) { cart[t.dataset.p]++; drawSell(); }
-      else if (t.dataset.pay) { pay = t.dataset.pay; drawSell(); }
-      else if (t.id === 'sellbtn') sell(ids, total);
-    };
-  }
-  async function sell(ids, total) {
-    const items = ids.map(id => { const p = products.find(x => x.id === id); return { id, name: p.name, qty: cart[id], price: p.price, cost: p.cost || 0 }; });
-    const b = db.batch();
-    b.set(db.collection('sales').doc(), { ts: firebase.firestore.Timestamp.now(), items, total, pay });
-    items.forEach(i => b.update(db.collection('products').doc(i.id), { stock: FV.increment(-i.qty) }));
-    try { await b.commit(); cart = {}; drawSell(); if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); }
-    catch (err) { note('Saqlanmadi: ' + err.message); }
-  }
-
-  // ---- TOVARLAR
-  async function addGood() {
-    const name = $('#gn').value.trim(), price = +$('#gp').value, cost = +$('#gc').value || 0, stock = +$('#gs').value || 0;
-    if (!name || !(price > 0)) return note('Nomi va sotish narxini kiriting.');
-    await db.collection('products').add({ name, price, cost, stock });
-    ['gn','gp','gc','gs'].forEach(i => $('#' + i).value = '');
-  }
-  function drawGoods() {
-    const l = $('#glist'); if (!l) return;
-    l.innerHTML = products.length ? products.map(p => `<div class="card"><div class="between"><div><b>${esc(p.name)}</b><div class="mute">Narx ${money(p.price)} · tannarx ${money(p.cost || 0)}</div></div><div class="${(p.stock||0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><input type="number" inputmode="decimal" placeholder="Kirim soni" id="in-${p.id}" style="margin:0"><button class="btn sm" data-in="${p.id}">Kirim</button><button class="btn sm ghost" data-del="${p.id}">O'chirish</button></div></div>`).join('') : '<div class="empty">Tovar yo\'q.</div>';
-    l.onclick = e => {
-      const t = e.target;
-      if (t.dataset.in) { const v = +$('#in-' + t.dataset.in).value; if (v > 0) db.collection('products').doc(t.dataset.in).update({ stock: FV.increment(v) }); }
-      if (t.dataset.del) ask("Tovar o'chirilsinmi?", () => db.collection('products').doc(t.dataset.del).delete());
-    };
-  }
-
-  // ---- XARAJAT
-  async function addExp() {
-    const name = $('#en').value.trim(), amount = +$('#ea').value;
-    if (!name || !(amount > 0)) return note('Nima uchun va summani kiriting.');
-    await db.collection('expenses').add({ name, amount, ts: firebase.firestore.Timestamp.now() });
-    $('#en').value = ''; $('#ea').value = '';
-  }
-  function drawExp() {
-    const l = $('#elist'); if (!l) return;
-    l.innerHTML = expenses.length ? expenses.map(x => `<div class="card between"><div><b>${esc(x.name)}</b><div class="mute">${x.ts.toDate().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div></div><div class="between" style="gap:12px"><b>${money(x.amount)}</b><button class="btn sm ghost" data-del="${x.id}" aria-label="O'chirish">✕</button></div></div>`).join('') : '<div class="empty">Bugun xarajat yo\'q.</div>';
-    l.onclick = e => { const id = e.target.dataset.del; if (id) ask("Xarajat o'chirilsinmi?", () => db.collection('expenses').doc(id).delete()); };
-  }
-
-  // ---- HISOBOT
-  function drawRep() {
-    const r = $('#rbox'); if (!r) return;
-    const rev = sales.reduce((s, x) => s + x.total, 0);
-    const cogs = sales.reduce((s, x) => s + x.items.reduce((a, i) => a + i.cost * i.qty, 0), 0);
-    const exp = expenses.reduce((s, x) => s + x.amount, 0);
-    const profit = rev - cogs - exp;
-    const cash = sales.filter(x => x.pay === 'naqd').reduce((s, x) => s + x.total, 0);
-    const top = {};
-    sales.forEach(x => x.items.forEach(i => top[i.name] = (top[i.name] || 0) + i.qty));
-    const topList = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    r.innerHTML = `<div class="card"><div class="mute">Sof foyda</div><div class="big ${profit >= 0 ? 'pos' : 'neg'}">${money(profit)}</div></div>
-    <div class="card">
-      <div class="between"><span>Tushum (${sales.length} ta savdo)</span><b>${money(rev)}</b></div>
-      <div class="between mute"><span>Naqd / karta</span><span>${money(cash)} / ${money(rev - cash)}</span></div><hr style="border:0;border-top:1px solid var(--line);margin:10px 0">
-      <div class="between"><span>Tovar tannarxi</span><b>${money(cogs)}</b></div>
-      <div class="between"><span>Xarajatlar</span><b>${money(exp)}</b></div></div>
-    <div class="card"><b>Ko'p sotilganlar</b>${topList.length ? topList.map(t => `<div class="between"><span>${esc(t[0])}</span><b>${t[1]} ta</b></div>`).join('') : '<div class="mute">Savdo yo\'q.</div>'}</div>`;
-  }
-
-  listenDay();
-  show('sell');
+function loginScreen(msg) {
+  $('#nav').innerHTML = '';
+  view.innerHTML = `<div class="login"><h2>Kafe hisobi</h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  $('#lgb').onclick = doLogin;
 }
+async function doLogin() {
+  const l = val('lg'), p = $('#pw').value;
+  if (!l || !p) return;
+  $('#lm').textContent = 'Tekshirilmoqda...';
+  try { await auth.signInWithEmailAndPassword(mail(l), p); }
+  catch (e) {
+    if (l.toLowerCase() === 'admin' && /user-not-found|invalid-credential/.test(e.code)) {
+      const any = await db.collection('users').limit(1).get().catch(() => ({ empty: false }));
+      if (any.empty) return ask("Asosiy hisob hali yo'q. Shu login-parol bilan yaratilsinmi?", async () => {
+        try { const c = await auth.createUserWithEmailAndPassword(mail(l), p); await db.collection('users').doc(c.user.uid).set({ login: 'admin', name: 'Asosiy', role: 'admin' }); } catch (e2) { $('#lm').textContent = 'Xato: ' + e2.message; }
+      });
+    }
+    $('#lm').textContent = "Login yoki parol noto'g'ri";
+  }
+}
+auth.onAuthStateChanged(async u => {
+  unsubs.forEach(f => f()); unsubs = []; dayUnsubs.forEach(f => f()); dayUnsubs = [];
+  if (!u) { S.me = null; return loginScreen(); }
+  let d; try { d = await db.collection('users').doc(u.uid).get(); } catch (e) { return loginScreen('Bazaga ulanib bo\'lmadi'); }
+  if (!d.exists) { await auth.signOut(); return loginScreen("Bu hisob uchun ruxsat yo'q"); }
+  S.me = { id: u.uid, ...d.data() };
+  S.cart = {}; S.table = null; S.orderId = null;
+  const L = (c, k, q) => unsubs.push((q || db.collection(c)).onSnapshot(s => { S[k] = s.docs.map(x => ({ id: x.id, ...x.data() })); fill(); }, e => note('Baza xatosi: ' + e.message)));
+  L('products', 'products', db.collection('products').orderBy('name')); L('cats', 'cats'); L('tables', 'tables', db.collection('tables').orderBy('n'));
+  L('orders', 'orders', db.collection('orders').where('status', '==', 'open'));
+  if (S.me.role === 'admin') L('users', 'users');
+  listenDay(); showTab(TABS[S.me.role][0][0]);
+});
+function listenDay() {
+  dayUnsubs.forEach(f => f()); dayUnsubs = [];
+  if (!['admin','boss'].includes(S.me.role)) return;
+  const a = new Date(S.day + 'T00:00:00'), b = new Date(a.getTime() + 864e5);
+  const q = c => db.collection(c).where('ts', '>=', a).where('ts', '<', b).orderBy('ts', 'desc');
+  dayUnsubs.push(q('sales').onSnapshot(s => { S.sales = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
+  dayUnsubs.push(q('expenses').onSnapshot(s => { S.expenses = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
+}
+function showTab(t) {
+  S.tab = t;
+  $('#nav').innerHTML = TABS[S.me.role].map(x => `<button data-t="${x[0]}" class="${x[0] === t ? 'on' : ''}">${x[1]}</button>`).join('') + '<button data-t="out">Chiqish</button>';
+  const sell = `<div id="oo"></div><div id="tb" class="chips"></div><div id="cc" class="chips"></div><div id="grid" class="grid"></div><div id="cart" class="card"></div>`;
+  const F = {
+    kassa: '<h2>Kassa</h2>' + sell, zakaz: '<h2>Zakaz</h2>' + sell,
+    tov: `<h2 id="ph">Yangi tovar</h2><div class="card"><input id="pn" placeholder="Nomi"><select id="pc"></select><div class="row"><input id="pp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="pk" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="ps" type="number" inputmode="decimal" placeholder="Qoldiq (soni)"><div class="row" style="margin-bottom:8px"><img id="pi" class="th" alt=""><input id="pf" type="file" accept="image/*" style="margin:0"></div><button class="btn" id="pb">Saqlash</button></div><h2>Kirim (mavjud tovarga)</h2><div class="card"><select id="ks"></select><div class="row"><input id="kq" type="number" inputmode="decimal" placeholder="Soni" style="margin:0"><button class="btn sm" id="kb">Kirim</button></div></div><h2>Kategoriyalar</h2><div class="card"><div class="row"><input id="cn" placeholder="Yangi kategoriya" style="margin:0"><button class="btn sm" id="cb">Qo'shish</button></div><div id="cl" style="margin-top:8px"></div></div><h2>Tovarlar</h2><div id="pl"></div>`,
+    stol: `<h2>Stollar</h2><div class="card"><div class="row"><input id="tn" placeholder="Stol raqami yoki nomi" style="margin:0"><button class="btn sm" id="tb2">Qo'shish</button></div></div><div id="tl"></div>`,
+    xar: `<h2>Xarajat</h2><div class="card"><input id="en" placeholder="Nima uchun"><input id="ea" type="number" inputmode="decimal" placeholder="Summa"><button class="btn" id="eb">Qo'shish</button></div><div id="el"></div>`,
+    hisob: `<h2>Hisobot</h2><input id="rd" type="date" value="${S.day}"><div id="rb"></div>`,
+    xod: `<h2>Yangi xodim</h2><div class="card"><input id="xn" placeholder="Ismi"><input id="xl" placeholder="Login" autocapitalize="none"><input id="xp" placeholder="Parol (kamida 6 belgi)"><select id="xr"><option value="kassir">Kassir</option><option value="ofitsant">Ofitsant</option><option value="boss">Boss</option></select><button class="btn" id="xb">Yaratish</button></div><h2>Xodimlar</h2><div id="xl2"></div>`
+  };
+  view.innerHTML = F[t]; bind(t); fill();
+}
+$('#nav').onclick = e => { const t = e.target.dataset.t; if (t === 'out') auth.signOut(); else if (t) showTab(t); };
+function bind(t) {
+  const b = (id, f) => $('#' + id) && ($('#' + id).onclick = f);
+  if (t === 'tov') {
+    b('pb', saveProduct); b('kb', addStock); b('cb', async () => { const n = val('cn'); if (n) { await db.collection('cats').add({ name: n }); $('#cn').value = ''; } });
+    $('#pf').onchange = e => resize(e.target.files[0]);
+  }
+  if (t === 'stol') b('tb2', async () => { const n = val('tn'); if (!n) return; await db.collection('tables').add({ name: n, n: parseFloat(n) || 0 }); $('#tn').value = ''; });
+  if (t === 'xar') b('eb', async () => { const n = val('en'), a = +val('ea'); if (!n || !(a > 0)) return note('Nima uchun va summani kiriting.'); await db.collection('expenses').add({ name: n, amount: a, ts: TS.now() }); $('#en').value = ''; $('#ea').value = ''; });
+  if (t === 'hisob') $('#rd').onchange = e => { S.day = e.target.value || today(); listenDay(); };
+  if (t === 'xod') b('xb', addStaff);
+  view.onclick = click;
+}
+function resize(f) {
+  if (!f) return; const r = new FileReader();
+  r.onload = () => { const im = new Image(); im.onload = () => { const k = 240 / Math.max(im.width, im.height, 240), c = document.createElement('canvas'); c.width = im.width * k; c.height = im.height * k; c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); S.img = c.toDataURL('image/jpeg', .7); $('#pi').src = S.img; }; im.src = r.result; };
+  r.readAsDataURL(f);
+}
+async function saveProduct() {
+  const d = { name: val('pn'), cat: $('#pc').value, price: +val('pp'), cost: +val('pk') || 0, stock: +val('ps') || 0 };
+  if (!d.name || !(d.price > 0)) return note('Nomi va sotish narxini kiriting.');
+  if (S.img) d.img = S.img;
+  if (S.edit) await db.collection('products').doc(S.edit).update(d); else await db.collection('products').add(d);
+  S.edit = null; S.img = ''; ['pn','pp','pk','ps'].forEach(i => $('#' + i).value = ''); $('#pi').removeAttribute('src'); $('#ph').textContent = 'Yangi tovar';
+}
+async function addStock() { const q = +val('kq'), id = $('#ks').value; if (id && q > 0) { await db.collection('products').doc(id).update({ stock: FV.increment(q) }); $('#kq').value = ''; } }
+async function addStaff() {
+  const n = val('xn'), l = val('xl'), p = val('xp'), r = $('#xr').value;
+  if (!n || !l || p.length < 6) return note('Ism, login va kamida 6 belgili parol kiriting.');
+  let sec; try { sec = firebase.app('sec'); } catch (e) { sec = firebase.initializeApp(FIREBASE_CONFIG, 'sec'); }
+  try { const c = await sec.auth().createUserWithEmailAndPassword(mail(l), p); await db.collection('users').doc(c.user.uid).set({ login: l, name: n, role: r }); await sec.auth().signOut(); ['xn','xl','xp'].forEach(i => $('#' + i).value = ''); }
+  catch (e) { note(/already/.test(e.code) ? 'Bu login band.' : 'Xato: ' + e.message); }
+}
+function click(e) {
+  const t = e.target.closest('[data-a]'); if (!t) return; const a = t.dataset.a, id = t.dataset.id, D = db.collection;
+  if (a === 'add') { const p = S.products.find(x => x.id === id); if (S.me.role !== 'ofitsant' && (S.cart[id] || 0) >= (p.stock || 0)) return; S.cart[id] = (S.cart[id] || 0) + 1; fill(); }
+  else if (a === 'minus') { if (--S.cart[id] <= 0) delete S.cart[id]; fill(); }
+  else if (a === 'plus') { S.cart[id]++; fill(); }
+  else if (a === 'cat') { S.cat = id; fill(); }
+  else if (a === 'tbl') { S.table = id; fill(); }
+  else if (a === 'pay') { S.pay = id; fill(); }
+  else if (a === 'order') loadOrder(id);
+  else if (a === 'send') sendOrder();
+  else if (a === 'sell') sell();
+  else if (a === 'edit') { const p = S.products.find(x => x.id === id); S.edit = id; S.img = ''; $('#ph').textContent = 'Tahrirlash'; $('#pn').value = p.name; $('#pc').value = p.cat || ''; $('#pp').value = p.price; $('#pk').value = p.cost || 0; $('#ps').value = p.stock || 0; if (p.img) $('#pi').src = p.img; else $('#pi').removeAttribute('src'); scrollTo(0, 0); view.scrollTop = 0; }
+  else if (a === 'del') ask("O'chirilsinmi?", () => db.collection(t.dataset.c).doc(id).delete());
+}
+async function sendOrder() {
+  const it = items(); if (!S.table || !it.length) return note('Stolni tanlang va ovqat qo\'shing.');
+  const tb = S.tables.find(x => x.id === S.table);
+  await db.collection('orders').add({ table: tb.name, items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0), waiter: S.me.name, status: 'open', ts: TS.now() });
+  S.cart = {}; S.table = null; fill(); note('Zakaz yuborildi');
+}
+function loadOrder(id) { const o = S.orders.find(x => x.id === id); S.cart = {}; o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = id; S.table = null; fill(); }
+const items = () => Object.keys(S.cart).map(id => { const p = S.products.find(x => x.id === id); return p && { id, name: p.name, qty: S.cart[id], price: p.price, cost: p.cost || 0 }; }).filter(Boolean);
+async function sell() {
+  const it = items(); if (!it.length) return;
+  const o = S.orders.find(x => x.id === S.orderId), tb = S.tables.find(x => x.id === S.table);
+  const b = db.batch();
+  b.set(db.collection('sales').doc(), { ts: TS.now(), items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0), pay: S.pay, where: o ? 'Stol ' + o.table : tb ? 'Stol ' + tb.name : 'Soboy', waiter: o ? o.waiter : '', cashier: S.me.name });
+  it.forEach(i => b.update(db.collection('products').doc(i.id), { stock: FV.increment(-i.qty) }));
+  if (o) b.update(db.collection('orders').doc(o.id), { status: 'paid' });
+  try { await b.commit(); S.cart = {}; S.orderId = null; S.table = null; fill(); } catch (e) { note('Saqlanmadi: ' + e.message); }
+}
+function fill() {
+  if (!S.me) return; const g = id => $('#' + id), t = S.tab, H = (id, h) => g(id) && (g(id).innerHTML = h);
+  const row = (l, r) => `<div class="card between">${l}${r}</div>`, del = (c, id) => `<button class="btn sm ghost" data-a="del" data-c="${c}" data-id="${id}" aria-label="O'chirish">✕</button>`;
+  if (t === 'kassa' || t === 'zakaz') {
+    const w = S.me.role === 'ofitsant', ps = S.products.filter(p => !S.cat || p.cat === S.cat);
+    H('oo', !w && S.orders.length ? '<div class="card"><b>Ochiq zakazlar</b><div class="chips" style="margin:8px 0 0">' + S.orders.map(o => `<button data-a="order" data-id="${o.id}" class="${S.orderId === o.id ? 'on' : ''}">Stol ${esc(o.table)} · ${money(o.total)}</button>`).join('') + '</div></div>' : '');
+    H('tb', S.tables.length ? S.tables.map(x => `<button data-a="tbl" data-id="${x.id}" class="${S.table === x.id ? 'on' : ''}">${esc(x.name)}</button>`).join('') + (w ? '' : `<button data-a="tbl" data-id="" class="${!S.table ? 'on' : ''}">Soboy</button>`) : '');
+    H('cc', S.cats.length ? `<button data-a="cat" data-id="" class="${!S.cat ? 'on' : ''}">Hammasi</button>` + S.cats.map(c => `<button data-a="cat" data-id="${c.id}" class="${S.cat === c.id ? 'on' : ''}">${esc(c.name)}</button>`).join('') : '');
+    H('grid', ps.length ? ps.map(p => { const q = S.cart[p.id] || 0, out = !w && (p.stock || 0) <= q; return `<button class="item ${q ? 'in' : ''}" data-a="add" data-id="${p.id}" ${out ? 'disabled' : ''}>${p.img ? `<img src="${p.img}" alt="">` : ''}<b>${esc(p.name)}</b>${money(p.price)}<br><small>Qoldiq: ${p.stock || 0}${q ? ' · savatda ' + q : ''}</small></button>`; }).join('') : '<div class="empty" style="grid-column:1/-1">Tovar yo\'q.</div>');
+    const it = items(), total = it.reduce((s, i) => s + i.qty * i.price, 0);
+    H('cart', it.length ? it.map(i => `<div class="between" style="margin-bottom:8px"><div><b>${esc(i.name)}</b><div class="mute">${money(i.price * i.qty)}</div></div><div class="qty"><button data-a="minus" data-id="${i.id}" aria-label="Kamaytirish">−</button><input class="qi" type="number" inputmode="numeric" value="${i.qty}" data-q="${i.id}"><button data-a="plus" data-id="${i.id}" aria-label="Ko'paytirish">+</button></div></div>`).join('') + (w ? `<div class="between" style="margin:8px 0"><span>Jami</span><span class="big">${money(total)}</span></div><button class="btn" data-a="send">Zakazni yuborish</button>` : `<div class="seg">${['naqd','karta','terminal'].map(x => `<button data-a="pay" data-id="${x}" class="${S.pay === x ? 'on' : ''}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}</div><div class="between" style="margin-bottom:8px"><span>Jami</span><span class="big">${money(total)}</span></div><button class="btn" data-a="sell">Sotish</button>`) : '<div class="empty">Savat bo\'sh.</div>');
+    document.querySelectorAll('[data-q]').forEach(i => i.onchange = () => { const v = Math.floor(+i.value); if (v > 0) S.cart[i.dataset.q] = v; else delete S.cart[i.dataset.q]; fill(); });
+  }
+  if (t === 'tov') {
+    const o = '<option value="">Kategoriyasiz</option>' + S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''), pc = g('pc'), pv = pc.value; pc.innerHTML = o; pc.value = pv;
+    const ks = g('ks'), kv = ks.value; ks.innerHTML = S.products.map(p => `<option value="${p.id}">${esc(p.name)} (${p.stock || 0})</option>`).join(''); ks.value = kv;
+    H('cl', S.cats.map(c => `<span class="between" style="margin-bottom:6px">${esc(c.name)}${del('cats', c.id)}</span>`).join('') || '<span class="mute">Kategoriya yo\'q.</span>');
+    H('pl', S.products.map(p => `<div class="card"><div class="between"><div class="row" style="flex:none">${p.img ? `<img class="th" src="${p.img}" alt="">` : ''}<div><b>${esc(p.name)}</b><div class="mute">${money(p.price)} · tannarx ${money(p.cost)}</div></div></div><div class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><button class="btn sm" data-a="edit" data-id="${p.id}">Tahrirlash</button>${del('products', p.id)}</div></div>`).join('') || '<div class="empty">Tovar yo\'q.</div>');
+  }
+  if (t === 'stol') H('tl', S.tables.map(x => row(`<b>${esc(x.name)}</b>`, del('tables', x.id))).join('') || '<div class="empty">Stol yo\'q.</div>');
+  if (t === 'xar') H('el', S.expenses.map(x => row(`<div><b>${esc(x.name)}</b></div>`, `<div class="between" style="gap:10px"><b>${money(x.amount)}</b>${del('expenses', x.id)}</div>`)).join('') || '<div class="empty">Bu kun xarajat yo\'q.</div>');
+  if (t === 'xod') H('xl2', S.users.map(u => row(`<div><b>${esc(u.name)}</b><div class="mute">${esc(u.login)} · ${esc(u.role)}</div></div>`, u.id === S.me.id ? '' : del('users', u.id))).join(''));
+  if (t === 'hisob') {
+    const rev = S.sales.reduce((s, x) => s + x.total, 0), cogs = S.sales.reduce((s, x) => s + x.items.reduce((a, i) => a + i.cost * i.qty, 0), 0), exp = S.expenses.reduce((s, x) => s + x.amount, 0), by = k => S.sales.filter(x => x.pay === k).reduce((s, x) => s + x.total, 0), pr = rev - cogs - exp, top = {};
+    S.sales.forEach(x => x.items.forEach(i => top[i.name] = (top[i.name] || 0) + i.qty));
+    H('rb', `<div class="card"><div class="mute">Sof foyda</div><div class="big ${pr >= 0 ? 'pos' : 'neg'}">${money(pr)}</div></div><div class="card"><div class="between"><span>Tushum (${S.sales.length} ta)</span><b>${money(rev)}</b></div>${['naqd','karta','terminal'].map(k => `<div class="between mute"><span>${k[0].toUpperCase() + k.slice(1)}</span><span>${money(by(k))}</span></div>`).join('')}<hr style="border:0;border-top:1px solid var(--line);margin:10px 0"><div class="between"><span>Tannarx</span><b>${money(cogs)}</b></div><div class="between"><span>Xarajat</span><b>${money(exp)}</b></div></div><div class="card"><b>Ko'p sotilgan</b>${Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => `<div class="between"><span>${esc(x[0])}</span><b>${x[1]} ta</b></div>`).join('') || '<div class="mute">Savdo yo\'q.</div>'}</div><div class="card"><b>Qoldiq</b>${S.products.map(p => `<div class="between"><span>${esc(p.name)}</span><b class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0}</b></div>`).join('') || '<div class="mute">Tovar yo\'q.</div>'}</div>`);
+  }
+}
+loginScreen();
 </script>
 </body>
 </html>
