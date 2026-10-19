@@ -71,7 +71,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Kafe hisobi</h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Kafe hisobi <small class="mute">v2</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin;
 }
 async function doLogin() {
@@ -80,7 +80,7 @@ async function doLogin() {
   $('#lm').textContent = 'Tekshirilmoqda...';
   try { await auth.signInWithEmailAndPassword(mail(l), p); }
   catch (e) {
-    if (l.toLowerCase() === 'admin' && /user-not-found|invalid-credential/.test(e.code)) {
+    if (l.toLowerCase() === 'admin' && !/network|too-many|wrong-password|operation-not-allowed|configuration/.test(e.code)) {
       $('#lm').textContent = '';
       return ask("Asosiy hisob topilmadi. Birinchi marta bo'lsa, shu login-parol bilan yaratilsinmi?", async () => {
         creating = true;
@@ -93,7 +93,7 @@ async function doLogin() {
         } catch (e2) { creating = false; loginScreen(/already/.test(e2.code) ? "Login yoki parol noto'g'ri" : 'Xato: ' + e2.message); }
       });
     }
-    $('#lm').textContent = "Login yoki parol noto'g'ri";
+    $('#lm').textContent = "Login yoki parol noto'g'ri (" + e.code + ")";
   }
 }
 let creating = false;
