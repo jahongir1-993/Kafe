@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Kafe hisobi</title>
+<title>Caffee POS</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -71,29 +71,31 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Kafe hisobi <small class="mute">v2</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
-  $('#lgb').onclick = doLogin;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v4</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
+const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
 async function doLogin() {
-  const l = val('lg'), p = $('#pw').value;
-  if (!l || !p) return;
-  $('#lm').textContent = 'Tekshirilmoqda...';
+  const l = val('lg'), p = $('#pw').value, btn = $('#lgb'), m = $('#lm');
+  if (!l || !p) return m.textContent = 'Login va parolni kiriting.';
+  btn.disabled = true; m.textContent = 'Tekshirilmoqda...';
   try { await auth.signInWithEmailAndPassword(mail(l), p); }
   catch (e) {
+    btn.disabled = false;
     if (l.toLowerCase() === 'admin' && !/network|too-many|wrong-password|operation-not-allowed|configuration/.test(e.code)) {
-      $('#lm').textContent = '';
+      m.textContent = '';
       return ask("Asosiy hisob topilmadi. Birinchi marta bo'lsa, shu login-parol bilan yaratilsinmi?", async () => {
-        creating = true;
+        creating = true; btn.disabled = true; m.textContent = 'Yaratilmoqda...';
         try {
           const c = await auth.createUserWithEmailAndPassword(mail(l), p);
           const any = await db.collection('users').limit(1).get();
-          if (!any.empty) { await c.user.delete(); creating = false; return loginScreen("Asosiy hisob allaqachon bor, parol noto'g'ri"); }
+          if (!any.empty) { await c.user.delete(); creating = false; return loginScreen("Asosiy hisob allaqachon bor, parol noto'g'ri."); }
           await db.collection('users').doc(c.user.uid).set({ login: 'admin', name: 'Asosiy', role: 'admin' });
           creating = false; boot(auth.currentUser);
-        } catch (e2) { creating = false; loginScreen(/already/.test(e2.code) ? "Login yoki parol noto'g'ri" : 'Xato: ' + e2.message); }
+        } catch (e2) { creating = false; loginScreen(/already/.test(e2.code) ? errMsg('') : errMsg(e2.code) + ' (' + e2.code + ')'); }
       });
     }
-    $('#lm').textContent = "Login yoki parol noto'g'ri (" + e.code + ")";
+    m.textContent = errMsg(e.code);
   }
 }
 let creating = false;
