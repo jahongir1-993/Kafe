@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kafe hisobi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+:root{--bg:#f3f5f4;--card:#fff;--ink:#16211d;--mute:#6b7a74;--line:#dfe5e2;--acc:#0f7a5c;--accink:#fff;--bad:#c4412f;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#101614;--card:#18211e;--ink:#e8efec;--mute:#92a29b;--line:#2a3733;--acc:#2fb88f;--accink:#04140e;--bad:#ef7967;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
+main{flex:1;overflow:auto;padding:12px 12px 24px}
+nav{display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0)}
+nav button{flex:1;border:0;background:none;color:var(--mute);padding:12px 4px;font:inherit;font-size:14px;font-weight:600}
+nav button.on{color:var(--acc);box-shadow:inset 0 -3px 0 var(--acc)}
+h2{font-size:18px;margin:4px 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+input,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin:0 0 8px}
+input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.row{display:flex;gap:8px;align-items:center}
+.row>*{flex:1}
+.btn{border:0;border-radius:8px;background:var(--acc);color:var(--accink);font:inherit;font-weight:700;padding:12px;width:100%}
+.btn.sm{width:auto;padding:8px 12px;flex:none}
+.btn.ghost{background:none;color:var(--bad);border:1px solid var(--line)}
+.btn:disabled{opacity:.4}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:left;font:inherit;color:var(--ink)}
+.item b{display:block}
+.item small{color:var(--mute)}
+.item:disabled{opacity:.45}
+.item.in{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+.between{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mute{color:var(--mute);font-size:14px}
+.big{font-size:26px;font-weight:800}
+.pos{color:var(--acc)}.neg{color:var(--bad)}
+.low{color:var(--bad);font-weight:700}
+.seg{display:flex;gap:8px;margin-bottom:8px}
+.seg button{flex:1;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit}
+.seg button.on{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:700}
+.qty{display:flex;align-items:center;gap:10px}
+.qty button{width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:18px}
+.empty{text-align:center;color:var(--mute);padding:18px 8px}
+.msg{padding:24px;text-align:center}
+@media(prefers-reduced-motion:no-preference){.btn:active,.item:active{transform:scale(.98)}}
+</style>
+</head>
+<body>
+<main id="view"></main>
+<nav id="nav"></nav>
+<script>
+// 1) Firebase sozlamasini shu yerga qo'ying (Firebase > Project settings > Your apps > Web)
+const FIREBASE_CONFIG = { apiKey:"AIzaSyCkdVVeE9og--yoLMRoBWWw7dAgcNaVqKY", authDomain:"kafe-pos-94dfb.firebaseapp.com", projectId:"kafe-pos-94dfb", appId:"1:780619577621:web:30beb98f9a7eaaa997d11c" };
+// 2) Faqat sizlar kirishi uchun Telegram ID'laringizni yozing, masalan [12345678, 87654321]. Bo'sh bo'lsa hamma kira oladi.
+const ALLOWED_IDS = [];
+
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const myId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null;
+const $ = s => document.querySelector(s);
+const view = $('#view');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => Math.round(n).toLocaleString('ru-RU') + " so'm";
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+const ask = (m, cb) => tg && tg.showConfirm ? tg.showConfirm(m, ok => ok && cb()) : (confirm(m) && cb());
+const note = m => tg && tg.showAlert ? tg.showAlert(m) : alert(m);
+
+if (!FIREBASE_CONFIG.projectId) {
+  view.innerHTML = '<div class="msg"><h2>Sozlash kerak</h2><p class="mute">Faylning boshidagi FIREBASE_CONFIG ga Firebase sozlamalarini yozing.</p></div>';
+} else if (ALLOWED_IDS.length && !ALLOWED_IDS.includes(myId)) {
+  view.innerHTML = '<div class="msg"><h2>Ruxsat yo\'q</h2><p class="mute">Bu ilova faqat egalari uchun.</p></div>';
+} else { start(); }
+
+function start() {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.firestore();
+  const FV = firebase.firestore.FieldValue;
+  let products = [], sales = [], expenses = [], cart = {}, pay = 'naqd', tab = 'sell', day = today(), unsubDay = [];
+
+  const tabs = [['sell','Savdo'],['goods','Tovarlar'],['exp','Xarajat'],['rep','Hisobot']];
+  $('#nav').innerHTML = tabs.map(t => `<button data-t="${t[0]}">${t[1]}</button>`).join('');
+  $('#nav').onclick = e => { const t = e.target.dataset.t; if (t) show(t); };
+
+  db.collection('products').orderBy('name').onSnapshot(s => {
+    products = s.docs.map(d => ({ id: d.id, ...d.data() }));
+    refresh();
+  }, err => note('Baza xatosi: ' + err.message));
+
+  function listenDay() {
+    unsubDay.forEach(u => u()); unsubDay = [];
+    const a = new Date(day + 'T00:00:00'), b = new Date(a.getTime() + 864e5);
+    const q = c => db.collection(c).where('ts', '>=', a).where('ts', '<', b).orderBy('ts', 'desc');
+    unsubDay.push(q('sales').onSnapshot(s => { sales = s.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }));
+    unsubDay.push(q('expenses').onSnapshot(s => { expenses = s.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }));
+  }
+
+  function show(t) {
+    tab = t;
+    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    const views = {
+      sell: '<h2>Savdo</h2><div id="grid" class="grid"></div><div id="cart" class="card"></div>',
+      goods: `<h2>Yangi tovar</h2><div class="card"><input id="gn" placeholder="Nomi (masalan, Cappuccino)"><div class="row"><input id="gp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="gc" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="gs" type="number" inputmode="decimal" placeholder="Qoldiq (soni)"><button class="btn" id="gadd">Tovar qo'shish</button></div><h2>Tovarlar</h2><div id="glist"></div>`,
+      exp: `<h2>Yangi xarajat</h2><div class="card"><input id="en" placeholder="Nima uchun (masalan, Sut xaridi)"><input id="ea" type="number" inputmode="decimal" placeholder="Summa"><button class="btn" id="eadd">Xarajat qo'shish</button></div><h2>Bugungi xarajatlar</h2><div id="elist"></div>`,
+      rep: `<div class="between"><h2>Hisobot</h2></div><input id="rd" type="date" value="${day}"><div id="rbox"></div>`
+    };
+    view.innerHTML = views[t];
+    if (t === 'goods') $('#gadd').onclick = addGood;
+    if (t === 'exp') { $('#eadd').onclick = addExp; if (day !== today()) { day = today(); listenDay(); } }
+    if (t === 'rep') $('#rd').onchange = e => { day = e.target.value || today(); listenDay(); };
+    if (t === 'sell' && day !== today()) { day = today(); listenDay(); }
+    refresh();
+  }
+
+  function refresh() {
+    ({ sell: drawSell, goods: drawGoods, exp: drawExp, rep: drawRep })[tab]();
+  }
+
+  // ---- SAVDO
+  function drawSell() {
+    const g = $('#grid'); if (!g) return;
+    g.innerHTML = products.length ? products.map(p => {
+      const q = cart[p.id] || 0, out = (p.stock || 0) <= q;
+      return `<button class="item ${q ? 'in' : ''}" data-add="${p.id}" ${out ? 'disabled' : ''}><b>${esc(p.name)}</b>${money(p.price)}<br><small>Qoldiq: ${p.stock || 0}${q ? ' · savatda ' + q : ''}</small></button>`;
+    }).join('') : '<div class="empty" style="grid-column:1/-1">Avval "Tovarlar" bo\'limida tovar qo\'shing.</div>';
+    g.onclick = e => { const b = e.target.closest('[data-add]'); if (b) { cart[b.dataset.add] = (cart[b.dataset.add] || 0) + 1; drawSell(); } };
+    const ids = Object.keys(cart).filter(id => products.some(p => p.id === id));
+    const total = ids.reduce((s, id) => s + cart[id] * products.find(p => p.id === id).price, 0);
+    const c = $('#cart');
+    c.innerHTML = ids.length ? ids.map(id => {
+      const p = products.find(x => x.id === id);
+      return `<div class="between" style="margin-bottom:8px"><div><b>${esc(p.name)}</b><div class="mute">${money(p.price * cart[id])}</div></div><div class="qty"><button data-m="${id}" aria-label="Kamaytirish">−</button><b>${cart[id]}</b><button data-p="${id}" aria-label="Ko'paytirish" ${(p.stock||0) <= cart[id] ? 'disabled' : ''}>+</button></div></div>`;
+    }).join('') + `<div class="seg"><button data-pay="naqd" class="${pay==='naqd'?'on':''}">Naqd</button><button data-pay="karta" class="${pay==='karta'?'on':''}">Karta</button></div><div class="between" style="margin-bottom:8px"><span>Jami</span><span class="big">${money(total)}</span></div><button class="btn" id="sellbtn">Sotish</button>` : '<div class="empty">Savat bo\'sh. Tovarni bosib qo\'shing.</div>';
+    c.onclick = e => {
+      const t = e.target;
+      if (t.dataset.m) { cart[t.dataset.m]--; if (cart[t.dataset.m] <= 0) delete cart[t.dataset.m]; drawSell(); }
+      else if (t.dataset.p) { cart[t.dataset.p]++; drawSell(); }
+      else if (t.dataset.pay) { pay = t.dataset.pay; drawSell(); }
+      else if (t.id === 'sellbtn') sell(ids, total);
+    };
+  }
+  async function sell(ids, total) {
+    const items = ids.map(id => { const p = products.find(x => x.id === id); return { id, name: p.name, qty: cart[id], price: p.price, cost: p.cost || 0 }; });
+    const b = db.batch();
+    b.set(db.collection('sales').doc(), { ts: firebase.firestore.Timestamp.now(), items, total, pay });
+    items.forEach(i => b.update(db.collection('products').doc(i.id), { stock: FV.increment(-i.qty) }));
+    try { await b.commit(); cart = {}; drawSell(); if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); }
+    catch (err) { note('Saqlanmadi: ' + err.message); }
+  }
+
+  // ---- TOVARLAR
+  async function addGood() {
+    const name = $('#gn').value.trim(), price = +$('#gp').value, cost = +$('#gc').value || 0, stock = +$('#gs').value || 0;
+    if (!name || !(price > 0)) return note('Nomi va sotish narxini kiriting.');
+    await db.collection('products').add({ name, price, cost, stock });
+    ['gn','gp','gc','gs'].forEach(i => $('#' + i).value = '');
+  }
+  function drawGoods() {
+    const l = $('#glist'); if (!l) return;
+    l.innerHTML = products.length ? products.map(p => `<div class="card"><div class="between"><div><b>${esc(p.name)}</b><div class="mute">Narx ${money(p.price)} · tannarx ${money(p.cost || 0)}</div></div><div class="${(p.stock||0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><input type="number" inputmode="decimal" placeholder="Kirim soni" id="in-${p.id}" style="margin:0"><button class="btn sm" data-in="${p.id}">Kirim</button><button class="btn sm ghost" data-del="${p.id}">O'chirish</button></div></div>`).join('') : '<div class="empty">Tovar yo\'q.</div>';
+    l.onclick = e => {
+      const t = e.target;
+      if (t.dataset.in) { const v = +$('#in-' + t.dataset.in).value; if (v > 0) db.collection('products').doc(t.dataset.in).update({ stock: FV.increment(v) }); }
+      if (t.dataset.del) ask("Tovar o'chirilsinmi?", () => db.collection('products').doc(t.dataset.del).delete());
+    };
+  }
+
+  // ---- XARAJAT
+  async function addExp() {
+    const name = $('#en').value.trim(), amount = +$('#ea').value;
+    if (!name || !(amount > 0)) return note('Nima uchun va summani kiriting.');
+    await db.collection('expenses').add({ name, amount, ts: firebase.firestore.Timestamp.now() });
+    $('#en').value = ''; $('#ea').value = '';
+  }
+  function drawExp() {
+    const l = $('#elist'); if (!l) return;
+    l.innerHTML = expenses.length ? expenses.map(x => `<div class="card between"><div><b>${esc(x.name)}</b><div class="mute">${x.ts.toDate().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div></div><div class="between" style="gap:12px"><b>${money(x.amount)}</b><button class="btn sm ghost" data-del="${x.id}" aria-label="O'chirish">✕</button></div></div>`).join('') : '<div class="empty">Bugun xarajat yo\'q.</div>';
+    l.onclick = e => { const id = e.target.dataset.del; if (id) ask("Xarajat o'chirilsinmi?", () => db.collection('expenses').doc(id).delete()); };
+  }
+
+  // ---- HISOBOT
+  function drawRep() {
+    const r = $('#rbox'); if (!r) return;
+    const rev = sales.reduce((s, x) => s + x.total, 0);
+    const cogs = sales.reduce((s, x) => s + x.items.reduce((a, i) => a + i.cost * i.qty, 0), 0);
+    const exp = expenses.reduce((s, x) => s + x.amount, 0);
+    const profit = rev - cogs - exp;
+    const cash = sales.filter(x => x.pay === 'naqd').reduce((s, x) => s + x.total, 0);
+    const top = {};
+    sales.forEach(x => x.items.forEach(i => top[i.name] = (top[i.name] || 0) + i.qty));
+    const topList = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    r.innerHTML = `<div class="card"><div class="mute">Sof foyda</div><div class="big ${profit >= 0 ? 'pos' : 'neg'}">${money(profit)}</div></div>
+    <div class="card">
+      <div class="between"><span>Tushum (${sales.length} ta savdo)</span><b>${money(rev)}</b></div>
+      <div class="between mute"><span>Naqd / karta</span><span>${money(cash)} / ${money(rev - cash)}</span></div><hr style="border:0;border-top:1px solid var(--line);margin:10px 0">
+      <div class="between"><span>Tovar tannarxi</span><b>${money(cogs)}</b></div>
+      <div class="between"><span>Xarajatlar</span><b>${money(exp)}</b></div></div>
+    <div class="card"><b>Ko'p sotilganlar</b>${topList.length ? topList.map(t => `<div class="between"><span>${esc(t[0])}</span><b>${t[1]} ta</b></div>`).join('') : '<div class="mute">Savdo yo\'q.</div>'}</div>`;
+  }
+
+  listenDay();
+  show('sell');
+}
+</script>
+</body>
+</html>
