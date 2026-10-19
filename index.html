@@ -81,15 +81,24 @@ async function doLogin() {
   try { await auth.signInWithEmailAndPassword(mail(l), p); }
   catch (e) {
     if (l.toLowerCase() === 'admin' && /user-not-found|invalid-credential/.test(e.code)) {
-      const any = await db.collection('users').limit(1).get().catch(() => ({ empty: false }));
-      if (any.empty) return ask("Asosiy hisob hali yo'q. Shu login-parol bilan yaratilsinmi?", async () => {
-        try { const c = await auth.createUserWithEmailAndPassword(mail(l), p); await db.collection('users').doc(c.user.uid).set({ login: 'admin', name: 'Asosiy', role: 'admin' }); } catch (e2) { $('#lm').textContent = 'Xato: ' + e2.message; }
+      $('#lm').textContent = '';
+      return ask("Asosiy hisob topilmadi. Birinchi marta bo'lsa, shu login-parol bilan yaratilsinmi?", async () => {
+        creating = true;
+        try {
+          const c = await auth.createUserWithEmailAndPassword(mail(l), p);
+          const any = await db.collection('users').limit(1).get();
+          if (!any.empty) { await c.user.delete(); creating = false; return loginScreen("Asosiy hisob allaqachon bor, parol noto'g'ri"); }
+          await db.collection('users').doc(c.user.uid).set({ login: 'admin', name: 'Asosiy', role: 'admin' });
+          creating = false; boot(auth.currentUser);
+        } catch (e2) { creating = false; loginScreen(/already/.test(e2.code) ? "Login yoki parol noto'g'ri" : 'Xato: ' + e2.message); }
       });
     }
     $('#lm').textContent = "Login yoki parol noto'g'ri";
   }
 }
-auth.onAuthStateChanged(async u => {
+let creating = false;
+auth.onAuthStateChanged(u => { if (!creating) boot(u); });
+async function boot(u) {
   unsubs.forEach(f => f()); unsubs = []; dayUnsubs.forEach(f => f()); dayUnsubs = [];
   if (!u) { S.me = null; return loginScreen(); }
   let d; try { d = await db.collection('users').doc(u.uid).get(); } catch (e) { return loginScreen('Bazaga ulanib bo\'lmadi'); }
@@ -101,7 +110,7 @@ auth.onAuthStateChanged(async u => {
   L('orders', 'orders', db.collection('orders').where('status', '==', 'open'));
   if (S.me.role === 'admin') L('users', 'users');
   listenDay(); showTab(TABS[S.me.role][0][0]);
-});
+}
 function listenDay() {
   dayUnsubs.forEach(f => f()); dayUnsubs = [];
   if (!['admin','boss'].includes(S.me.role)) return;
