@@ -74,7 +74,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v8</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v9</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -114,6 +114,8 @@ async function boot0(u) {
   try { d = await withTimeout(db.collection('users').doc(u.uid).get(), 20000, 'Baza'); } catch (e) { return loginScreen('Bazaga ulanib bo\'lmadi: ' + (e.code || e.message)); }
   if (!d.exists) { await auth.signOut(); return loginScreen("Bu hisob uchun ruxsat yo'q"); }
   S.me = { id: u.uid, ...d.data() };
+  S.me.role = String(S.me.role || '').trim().toLowerCase();
+  if (!TABS[S.me.role]) { await auth.signOut(); return loginScreen("Rol noto'g'ri yozilgan: '" + S.me.role + "'. Firebase'da users hujjatidagi role maydonini 'admin' ga to'g'rilang."); }
   S.cart = {}; S.table = null; S.orderId = null;
   const L = (c, k, q) => unsubs.push((q || db.collection(c)).onSnapshot(s => { S[k] = s.docs.map(x => ({ id: x.id, ...x.data() })); fill(); }, e => note('Baza xatosi: ' + e.message)));
   L('products', 'products', db.collection('products').orderBy('name')); L('cats', 'cats'); L('tables', 'tables', db.collection('tables').orderBy('n'));
