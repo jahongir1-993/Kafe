@@ -74,7 +74,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v10</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v13</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -192,7 +192,7 @@ function click(e) {
   else if (a === 'minus') { if (--S.cart[id] <= 0) delete S.cart[id]; fill(); }
   else if (a === 'plus') { S.cart[id]++; fill(); }
   else if (a === 'cat') { S.cat = id; fill(); }
-  else if (a === 'tbl') { S.table = id; fill(); }
+  else if (a === 'tbl') { const tb = S.tables.find(x => x.id === id), o = tb && S.me.role !== 'ofitsant' && S.orders.find(x => x.table === tb.name); if (o) return loadOrder(o.id); S.table = id; S.orderId = null; fill(); }
   else if (a === 'pay') { S.pay = id; fill(); }
   else if (a === 'order') loadOrder(id);
   else if (a === 'send') sendOrder();
@@ -207,11 +207,12 @@ function click(e) {
 }
 async function sendOrder() {
   const it = items(); if (!S.table || !it.length) return note('Stolni tanlang va ovqat qo\'shing.');
-  const tb = S.tables.find(x => x.id === S.table);
-  await db.collection('orders').add({ table: tb.name, items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0), waiter: S.me.name, status: 'open', ts: TS.now() });
+  const tb = S.tables.find(x => x.id === S.table), ex = S.orders.find(o => o.table === tb.name), sum = l => l.reduce((s, i) => s + i.qty * i.price, 0);
+  if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); await db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }); }
+  else await db.collection('orders').add({ table: tb.name, items: it, total: sum(it), waiter: S.me.name, status: 'open', ts: TS.now() });
   S.cart = {}; S.table = null; fill(); note('Zakaz yuborildi');
 }
-function loadOrder(id) { const o = S.orders.find(x => x.id === id); S.cart = {}; o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = id; S.table = null; fill(); }
+function loadOrder(id) { const o = S.orders.find(x => x.id === id); S.cart = {}; o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = id; S.orderQty = o.items.reduce((s, i) => s + i.qty, 0); S.table = null; fill(); }
 const items = () => Object.keys(S.cart).map(id => { const p = S.products.find(x => x.id === id); return p && { id, name: p.name, qty: S.cart[id], price: p.price, cost: p.cost || 0 }; }).filter(Boolean);
 async function closeShift() {
   const sh = S.shiftList[0]; if (!sh) return;
@@ -226,6 +227,8 @@ async function sell() {
   if (!S.shiftList.length) return note('Avval kassani oching.');
   if (S.pay === 'qarz' && !S.contact) return note('Qarzga sotish uchun kontaktni tanlang.');
   const o = S.orders.find(x => x.id === S.orderId), tb = S.tables.find(x => x.id === S.table);
+  if (S.orderId && !o) { S.orderId = null; S.cart = {}; fill(); return note('Bu zakaz allaqachon yopilgan.'); }
+  if (o && o.items.reduce((s, i) => s + i.qty, 0) !== S.orderQty) { loadOrder(o.id); return note("Zakazga qo'shimcha ovqat kiritilgan. Yangilandi, tekshirib qayta Sotish bosing."); }
   const b = db.batch();
   b.set(db.collection('sales').doc(), { ts: TS.now(), items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0), pay: S.pay, where: o ? 'Stol ' + o.table : tb ? 'Stol ' + tb.name : 'Soboy', waiter: o ? o.waiter : '', cashier: S.me.name, contactId: S.pay === 'qarz' ? S.contact : '', contactName: S.pay === 'qarz' ? ((S.contacts.find(c => c.id === S.contact) || {}).name || '') : '' });
   it.forEach(i => b.update(db.collection('products').doc(i.id), { stock: FV.increment(-i.qty) }));
@@ -238,8 +241,8 @@ function fill() {
   if (t === 'kassa' || t === 'zakaz') {
     const w = S.me.role === 'ofitsant', ps = S.products.filter(p => !S.cat || p.cat === S.cat), sh = S.shiftList[0];
     H('sh', t === 'kassa' ? (sh ? `<div class="card between"><span class="mute">Kassa ochiq (boshida ${money(sh.cash)})</span><button class="btn sm ghost" data-a="shclose">Yopish</button></div>` : `<div class="card"><b>Kassa yopiq</b><div class="row" style="margin-top:8px"><input id="sc" type="number" inputmode="decimal" placeholder="Kassadagi naqd pul" style="margin:0"><button class="btn sm" data-a="shopen">Ochish</button></div></div>`) : '');
-    H('oo', !w && S.orders.length ? '<div class="card"><b>Ochiq zakazlar</b><div class="chips" style="margin:8px 0 0">' + S.orders.map(o => `<button data-a="order" data-id="${o.id}" class="${S.orderId === o.id ? 'on' : ''}">Stol ${esc(o.table)} · ${money(o.total)}</button>`).join('') + '</div></div>' : '');
-    H('tb', S.tables.length ? S.tables.map(x => `<button data-a="tbl" data-id="${x.id}" class="${S.table === x.id ? 'on' : ''}">${esc(x.name)}</button>`).join('') + (w ? '' : `<button data-a="tbl" data-id="" class="${!S.table ? 'on' : ''}">Soboy</button>`) : '');
+    H('oo', !w && S.orders.length ? '<h2>Ochiq zakazlar</h2>' + S.orders.map(o => `<div class="card" style="${S.orderId === o.id ? 'border-color:var(--acc)' : ''}"><div class="between"><b>Stol ${esc(o.table)}</b><span class="mute">${esc(o.waiter)}</span></div><div class="mute" style="margin:6px 0">${o.items.map(i => esc(i.name) + ' × ' + i.qty).join(', ')}</div><div class="between"><b>${money(o.total)}</b><button class="btn sm" data-a="order" data-id="${o.id}">${S.orderId === o.id ? 'Ochiq' : 'Hisoblash'}</button></div></div>`).join('') : '');
+    H('tb', (w ? '' : `<button data-a="tbl" data-id="" class="${!S.table ? 'on' : ''}">Soboy</button>`) + S.tables.map(x => `<button data-a="tbl" data-id="${x.id}" class="${S.table === x.id || (S.orderId && (S.orders.find(o => o.id === S.orderId) || {}).table === x.name) ? 'on' : ''}">${esc(x.name)}${S.orders.some(o => o.table === x.name) ? ' ●' : ''}</button>`).join('') + (w && !S.tables.length ? '<span class="mute">Avval Stol bo\'limida stol qo\'shing.</span>' : ''));
     H('cc', S.cats.length ? `<button data-a="cat" data-id="" class="${!S.cat ? 'on' : ''}">Hammasi</button>` + S.cats.map(c => `<button data-a="cat" data-id="${c.id}" class="${S.cat === c.id ? 'on' : ''}">${esc(c.name)}</button>`).join('') : '');
     H('grid', ps.length ? ps.map(p => { const q = S.cart[p.id] || 0, out = !w && (p.stock || 0) <= q; return `<button class="item ${q ? 'in' : ''}" data-a="add" data-id="${p.id}" ${out ? 'disabled' : ''}>${p.img ? `<img src="${p.img}" alt="">` : ''}<b>${esc(p.name)}</b>${money(p.price)}<br><small>Qoldiq: ${p.stock || 0}${q ? ' · savatda ' + q : ''}</small></button>`; }).join('') : '<div class="empty" style="grid-column:1/-1">Tovar yo\'q.</div>');
     const it = items(), total = it.reduce((s, i) => s + i.qty * i.price, 0);
@@ -260,7 +263,10 @@ function fill() {
   if (t === 'hisob') {
     const rev = S.sales.reduce((s, x) => s + x.total, 0), cogs = S.sales.reduce((s, x) => s + x.items.reduce((a, i) => a + i.cost * i.qty, 0), 0), exp = S.expenses.reduce((s, x) => s + x.amount, 0), wg = S.wages.reduce((s, x) => s + x.amount, 0), totalDebt = S.debtSales.reduce((s, x) => s + x.total, 0) - S.debtPays.reduce((s, x) => s + x.amount, 0), by = k => S.sales.filter(x => x.pay === k).reduce((s, x) => s + x.total, 0), pr = rev - cogs - exp - wg, top = {};
     S.sales.forEach(x => x.items.forEach(i => top[i.name] = (top[i.name] || 0) + i.qty));
-    H('rb', `<div class="card"><div class="mute">Sof foyda</div><div class="big ${pr >= 0 ? 'pos' : 'neg'}">${money(pr)}</div></div><div class="card"><div class="between"><span>Tushum (${S.sales.length} ta)</span><b>${money(rev)}</b></div>${['naqd','karta','terminal','qarz'].map(k => `<div class="between mute"><span>${k[0].toUpperCase() + k.slice(1)}</span><span>${money(by(k))}</span></div>`).join('')}<hr style="border:0;border-top:1px solid var(--line);margin:10px 0"><div class="between"><span>Tannarx</span><b>${money(cogs)}</b></div><div class="between"><span>Xarajat</span><b>${money(exp)}</b></div><div class="between"><span>Oylik</span><b>${money(wg)}</b></div><div class="between"><span>Jami qarz (to'lanmagan)</span><b class="neg">${money(totalDebt)}</b></div></div><div class="card"><b>Ko'p sotilgan</b>${Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => `<div class="between"><span>${esc(x[0])}</span><b>${x[1]} ta</b></div>`).join('') || '<div class="mute">Savdo yo\'q.</div>'}</div><div class="card"><b>Qoldiq</b>${S.products.map(p => `<div class="between"><span>${esc(p.name)}</span><b class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0}</b></div>`).join('') || '<div class="mute">Tovar yo\'q.</div>'}</div>`);
+    const grp = f => { const m = {}; S.sales.forEach(x => { const k = f(x); if (k) m[k] = (m[k] || 0) + x.total; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(e => `<div class="between"><span>${esc(e[0])}</span><b>${money(e[1])}</b></div>`).join('') || '<div class="mute">Yo\'q.</div>'; };
+    const dl = S.contacts.map(c => [c, debtOf(c.id)]).filter(e => e[1] > 0).map(e => `<div class="between"><span>${esc(e[0].name)} <small class="mute">${esc(e[0].phone)}</small></span><b class="neg">${money(e[1])}</b></div>`).join('') || '<div class="mute">Qarz yo\'q.</div>';
+    const sl = S.sales.slice(0, 30).map(x => `<div class="between" style="margin-top:6px"><span>${x.ts.toDate().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · ${esc(x.where || 'Soboy')} · ${esc(x.pay)}${x.contactName ? ' (' + esc(x.contactName) + ')' : ''}</span><b>${money(x.total)}</b></div>`).join('') || '<div class="mute">Savdo yo\'q.</div>';
+    H('rb', `<div class="card"><div class="mute">Sof foyda</div><div class="big ${pr >= 0 ? 'pos' : 'neg'}">${money(pr)}</div></div><div class="card"><div class="between"><span>Tushum (${S.sales.length} ta)</span><b>${money(rev)}</b></div>${['naqd','karta','terminal','qarz'].map(k => `<div class="between mute"><span>${k[0].toUpperCase() + k.slice(1)}</span><span>${money(by(k))}</span></div>`).join('')}<hr style="border:0;border-top:1px solid var(--line);margin:10px 0"><div class="between"><span>Tannarx</span><b>${money(cogs)}</b></div><div class="between"><span>Xarajat</span><b>${money(exp)}</b></div><div class="between"><span>Oylik</span><b>${money(wg)}</b></div><div class="between"><span>Jami qarz (to'lanmagan)</span><b class="neg">${money(totalDebt)}</b></div></div><div class="card"><b>Ko'p sotilgan</b>${Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => `<div class="between"><span>${esc(x[0])}</span><b>${x[1]} ta</b></div>`).join('') || '<div class="mute">Savdo yo\'q.</div>'}</div><div class="card"><b>Stol / Soboy bo'yicha</b>${grp(x => x.where || 'Soboy')}</div><div class="card"><b>Ofitsantlar bo'yicha</b>${grp(x => x.waiter)}</div><div class="card"><b>Qarzdorlar</b>${dl}</div><div class="card"><b>Savdolar</b>${sl}</div><div class="card between"><span>Kassa</span><b>${S.shiftList[0] ? 'Ochiq (boshida ' + money(S.shiftList[0].cash) + ')' : 'Yopiq'}</b></div><div class="card"><b>Qoldiq</b>${S.products.map(p => `<div class="between"><span>${esc(p.name)}</span><b class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0}</b></div>`).join('') || '<div class="mute">Tovar yo\'q.</div>'}</div>`);
   }
 }
 loginScreen();
