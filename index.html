@@ -83,7 +83,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v18</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v19</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -241,23 +241,29 @@ function click(e) {
     ask("O'chirilsinmi?", () => { if (S.editTable === id) resetTable(); db.collection(t.dataset.c).doc(id).delete(); });
   }
 }
-async function sendOrder() {
-  const it = items();
+function sendOrder() {
+  const it = items(), sum = l => l.reduce((s, i) => s + i.qty * i.price, 0), fail = e => note('Saqlanmadi: ' + (e && e.message || e));
   if (S.orderId) {
     const o = S.orders.find(x => x.id === S.orderId);
     if (!o) { leaveTable(); return note('Bu zakaz allaqachon yopilgan.'); }
     if (sig(o.items) !== S.orderSig) { reopen(); return note("Bu zakaz boshqa joydan o'zgartirilgan. Yangilandi, tekshirib qayta saqlang."); }
     if (!it.length) return note('Savat bo\'sh. Zakazni butunlay o\'chirish uchun "Zakazni bekor qilish" tugmasini bosing.');
-    try { await db.collection('orders').doc(o.id).update({ items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0) }); } catch (e) { return note('Saqlanmadi: ' + e.message); }
+    db.collection('orders').doc(o.id).update({ items: it, total: sum(it) }).catch(fail);
     return leaveTable();
   }
   if (!S.table || !it.length) return note('Stolni tanlang va ovqat qo\'shing.');
-  const sab = S.table === '#s', tb = S.tables.find(x => x.id === S.table), name = sab ? nextSaboy() : tb && tb.name, ex = !sab && S.orders.find(o => o.table === name && !o.takeaway), sum = l => l.reduce((s, i) => s + i.qty * i.price, 0);
-  if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); await db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }); }
-  else { if (!name) return leaveTable(); await db.collection('orders').add({ table: name, takeaway: sab, items: it, total: sum(it), waiter: S.me.name, status: 'open', ts: TS.now() }); }
+  const sab = S.table === '#s', tb = S.tables.find(x => x.id === S.table), ex = !sab && tb && S.orders.find(o => o.table === tb.name && !o.takeaway);
+  if (!sab && !tb) return leaveTable();
+  if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }).catch(fail); }
+  else db.collection('orders').add({ table: sab ? nextSaboy() : tb.name, takeaway: sab, items: it, total: sum(it), waiter: S.me.name, status: 'open', ts: TS.now() }).catch(fail);
   leaveTable();
 }
-function nextSaboy() { const u = new Set(S.orders.filter(o => o.takeaway).map(o => o.table)); let n = 1; while (u.has('Saboy ' + n)) n++; return 'Saboy ' + n; }
+function nextSaboy() {
+  const d = today(); if (S.sabDay !== d) { S.sabDay = d; S.sabN = 0; try { S.sabN = +localStorage.getItem('sab-' + d) || 0; } catch (e) {} }
+  let n = S.sabN; S.orders.forEach(o => { const m = o.takeaway && /(\d+)$/.exec(o.table); if (m) n = Math.max(n, +m[1]); });
+  S.sabN = ++n; try { localStorage.setItem('sab-' + d, n); } catch (e) {}
+  return 'Saboy ' + n;
+}
 function openSaboy(id) { const o = id && S.orders.find(x => x.id === id); S.cart = {}; if (o) o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = o ? o.id : null; S.orderSig = o ? sig(o.items) : ''; S.table = '#s'; S.dirty = false; S.cat = ''; S.pay = 'naqd'; S.contact = ''; fill(); scrollTo(0, 0); view.scrollTop = 0; }
 function reopen() { if (S.table === '#s') openSaboy(S.orderId); else openTable(S.table); }
 function openTable(id) { const tb = S.tables.find(x => x.id === id); if (!tb) return; const o = S.orders.find(x => x.table === tb.name); S.cart = {}; if (o) o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = o ? o.id : null; S.orderSig = o ? sig(o.items) : ''; S.table = id; S.dirty = false; S.cat = ''; S.pay = 'naqd'; S.contact = ''; fill(); scrollTo(0, 0); view.scrollTop = 0; }
@@ -290,7 +296,7 @@ async function sell() {
   b.set(db.collection('sales').doc(), { ts: TS.now(), items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0), pay: S.pay, where: o ? tl(o.table) : tb ? tl(tb.name) : 'Saboy', waiter: o ? o.waiter : '', cashier: S.me.name, contactId: S.pay === 'qarz' ? S.contact : '', contactName: S.pay === 'qarz' ? ((S.contacts.find(c => c.id === S.contact) || {}).name || '') : '' });
   it.forEach(i => b.update(db.collection('products').doc(i.id), { stock: FV.increment(-i.qty) }));
   if (o) b.update(db.collection('orders').doc(o.id), { status: 'paid' });
-  try { await b.commit(); leaveTable(); } catch (e) { note('Saqlanmadi: ' + e.message); }
+  b.commit().catch(e => note('Saqlanmadi: ' + e.message)); leaveTable();
 }
 function fill() {
   if (!S.me) return; const g = id => $('#' + id), t = S.tab, H = (id, h) => { const e = g(id); if (e && e._h !== h) { e._h = h; e.innerHTML = h; } };
