@@ -52,6 +52,7 @@ input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px
 <body>
 <main id="view"></main>
 <nav id="nav"></nav>
+<script>window.addEventListener('error',function(e){var v=document.getElementById('view');if(v&&!v.innerHTML)v.textContent='Xato: '+e.message;});</script>
 <script>
 const FIREBASE_CONFIG = { apiKey:"AIzaSyCkdVVeE9og--yoLMRoBWWw7dAgcNaVqKY", authDomain:"kafe-pos-94dfb.firebaseapp.com", projectId:"kafe-pos-94dfb", appId:"1:780619577621:web:30beb98f9a7eaaa997d11c" };
 const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
@@ -65,7 +66,7 @@ const val = id => $('#' + id).value.trim();
 const mail = l => l.toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@kafe.app';
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore.FieldValue, TS = firebase.firestore.Timestamp;
-db.settings({ experimentalForceLongPolling: true, merge: true });
+try { db.settings({ experimentalForceLongPolling: true }); } catch (e) { console.warn(e); }
 const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rj) => setTimeout(() => rj(new Error(label + ' javob bermadi (internetni tekshiring)')), ms))]);
 const S = { contacts: [], notes: [], debtSales: [], debtPays: [], wages: [], shiftList: [], contact: '', me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pay: 'naqd', cat: '', day: today(), tab: '', edit: null, img: '' };
 const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['kon','Kontakt'],['xar','Xarajat'],['hisob','Hisobot'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
@@ -73,7 +74,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v7</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v8</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
