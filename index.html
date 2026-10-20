@@ -83,7 +83,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v16</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v17</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -223,7 +223,7 @@ function click(e) {
   else if (a === 'pay') { S.pay = id; fill(); }
   else if (a === 'order') loadOrder(id);
   else if (a === 'wt') openTable(id);
-  else if (a === 'wback') { if (S.dirty) ask("Saqlanmagan o'zgarishlar bor. Chiqilsinmi?", leaveTable); else leaveTable(); }
+  else if (a === 'wback') backTable();
   else if (a === 'unload') { S.cart = {}; S.orderId = null; S.table = null; fill(); }
   else if (a === 'cancelorder') { const oid = S.orderId; if (oid) ask('Zakaz butunlay bekor qilinsinmi?', async () => { try { await db.collection('orders').doc(oid).update({ status: 'cancelled' }); } catch (e) { return note('Xato: ' + e.message); } if (S.orderId === oid) { S.cart = {}; S.orderId = null; S.table = null; S.dirty = false; } fill(); }); }
   else if (a === 'tedit') { const x = S.tables.find(q => q.id === id); if (!x) return; S.editTable = id; $('#tn').value = x.name; $('#tb2').textContent = 'Saqlash'; $('#th').textContent = 'Stolni tahrirlash'; $('#tc').hidden = false; $('#tn').focus(); scrollTo(0, 0); view.scrollTop = 0; }
@@ -248,15 +248,21 @@ async function sendOrder() {
     if (sig(o.items) !== S.orderSig) { openTable(S.table); return note("Bu zakaz boshqa joydan o'zgartirilgan. Yangilandi, tekshirib qayta saqlang."); }
     if (!it.length) return note('Savat bo\'sh. Zakazni butunlay o\'chirish uchun "Zakazni bekor qilish" tugmasini bosing.');
     try { await db.collection('orders').doc(o.id).update({ items: it, total: it.reduce((s, i) => s + i.qty * i.price, 0) }); } catch (e) { return note('Saqlanmadi: ' + e.message); }
-    leaveTable(); return note('Zakaz saqlandi');
+    return leaveTable();
   }
   if (!S.table || !it.length) return note('Stolni tanlang va ovqat qo\'shing.');
   const tb = S.tables.find(x => x.id === S.table), ex = S.orders.find(o => o.table === tb.name), sum = l => l.reduce((s, i) => s + i.qty * i.price, 0);
   if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); await db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }); }
   else await db.collection('orders').add({ table: tb.name, items: it, total: sum(it), waiter: S.me.name, status: 'open', ts: TS.now() });
-  S.dirty = false; S.cart = {}; S.table = null; fill(); note('Zakaz yuborildi');
+  S.dirty = false; S.cart = {}; S.table = null; fill();
 }
 function openTable(id) { const tb = S.tables.find(x => x.id === id); if (!tb) return; const o = S.orders.find(x => x.table === tb.name); S.cart = {}; if (o) o.items.forEach(i => S.cart[i.id] = i.qty); S.orderId = o ? o.id : null; S.orderSig = o ? sig(o.items) : ''; S.table = id; S.dirty = false; S.cat = ''; fill(); scrollTo(0, 0); view.scrollTop = 0; }
+async function backTable() {
+  if (!S.dirty) return leaveTable();
+  if (items().length) return sendOrder();
+  if (S.orderId) { try { await db.collection('orders').doc(S.orderId).update({ status: 'cancelled' }); } catch (e) { return note('Xato: ' + e.message); } }
+  leaveTable();
+}
 function leaveTable() { S.cart = {}; S.table = null; S.orderId = null; S.dirty = false; fill(); }
 const sig = l => l.map(i => i.id + ':' + i.qty).sort().join('|');
 function loadOrder(id, keep) { const o = S.orders.find(x => x.id === id); if (!o) return; const old = keep ? S.cart : {}; S.cart = {}; o.items.forEach(i => S.cart[i.id] = i.qty); Object.keys(old).forEach(k => S.cart[k] = (S.cart[k] || 0) + old[k]); S.orderId = id; S.orderSig = sig(o.items); S.table = null; fill(); }
