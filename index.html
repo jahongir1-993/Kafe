@@ -79,12 +79,12 @@ const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore
 try { db.settings({ experimentalForceLongPolling: true }); } catch (e) { console.warn(e); }
 const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rj) => setTimeout(() => rj(new Error(label + ' javob bermadi (internetni tekshiring)')), ms))]);
 const S = { contacts: [], notes: [], debtSales: [], debtPays: [], wages: [], shiftList: [], contact: '', me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pm: ['naqd'], pa: {}, cat: '', day: today(), tab: '', edit: null, img: '', editTable: null, orderSig: '', dirty: false, hday: today(), hist: null };
-const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['kon','Kontakt'],['xar','Xarajat'],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
+const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['kon','Kontakt'],['xar','Xarajat'],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['xar','Xarajat'],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
 let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v21</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v22</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -138,11 +138,13 @@ async function boot0(u) {
 }
 function listenDay() {
   dayUnsubs.forEach(f => f()); dayUnsubs = [];
-  if (!['admin','boss'].includes(S.me.role)) return;
+  if (!['admin','boss','kassir'].includes(S.me.role)) return;
+  if (S.me.role === 'kassir') S.day = today();
   const a = new Date(S.day + 'T00:00:00'), b = new Date(a.getTime() + 864e5);
   const q = c => db.collection(c).where('ts', '>=', a).where('ts', '<', b).orderBy('ts', 'desc');
-  dayUnsubs.push(q('sales').onSnapshot(s => { S.sales = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
   dayUnsubs.push(q('expenses').onSnapshot(s => { S.expenses = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
+  if (S.me.role === 'kassir') return;
+  dayUnsubs.push(q('sales').onSnapshot(s => { S.sales = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
   dayUnsubs.push(q('wages').onSnapshot(s => { S.wages = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
 }
 function showTab(t) {
@@ -170,7 +172,7 @@ function bind(t) {
     $('#pf').onchange = e => resize(e.target.files[0]);
   }
   if (t === 'stol') { b('tb2', saveTable); b('tc', resetTable); }
-  if (t === 'xar') b('eb', async () => { const n = val('en'), a = +val('ea'); if (!n || !(a > 0)) return note('Nima uchun va summani kiriting.'); await db.collection('expenses').add({ name: n, amount: a, ts: TS.now() }); $('#en').value = ''; $('#ea').value = ''; });
+  if (t === 'xar') b('eb', async () => { const n = val('en'), a = +val('ea'); if (!n || !(a > 0)) return note('Nima uchun va summani kiriting.'); try { await db.collection('expenses').add({ name: n, amount: a, by: S.me.name, ts: TS.now() }); } catch (e) { return note('Saqlanmadi: ' + e.message); } $('#en').value = ''; $('#ea').value = ''; });
   if (t === 'hisob') $('#rd').onchange = e => { S.day = e.target.value || today(); listenDay(); };
   if (t === 'xod') b('xb', addStaff);
   if (t === 'tarix') { $('#td').onchange = e => { S.hday = e.target.value || today(); loadHist(); }; loadHist(); }
@@ -384,7 +386,7 @@ function fill() {
   if (t === 'kon') H('kl', S.contacts.map(c => `<div class="card"><div class="between"><div><b>${esc(c.name)}</b><div class="mute">${esc(c.phone)} · ${c.type}</div></div>${del('contacts', c.id)}</div><div class="between" style="margin-top:6px"><span>Qarz</span><b class="${debtOf(c.id) > 0 ? 'neg' : ''}">${money(debtOf(c.id))}</b></div><div class="row" style="margin-top:8px"><input id="dp-${c.id}" type="number" inputmode="decimal" placeholder="Qarz to'lovi" style="margin:0"><button class="btn sm" data-a="dp" data-id="${c.id}">Qabul</button></div>${c.type === 'ishchi' ? `<div class="row" style="margin-top:8px"><input id="wg-${c.id}" type="number" inputmode="decimal" placeholder="Kunlik oylik" style="margin:0"><button class="btn sm" data-a="wage" data-id="${c.id}">Oylik berish</button></div>` : ''}</div>`).join('') || '<div class="empty">Kontakt yo\'q.</div>');
   if (t === 'esl') H('nl', S.notes.slice().sort((a, b) => (a.done - b.done) || String(a.date || '9').localeCompare(String(b.date || '9'))).map(n => row(`<div><b style="${n.done ? 'text-decoration:line-through;opacity:.5' : ''}">${esc(n.text)}</b>${n.date ? `<div class="mute">${esc(n.date)}</div>` : ''}</div>`, `<div class="row" style="flex:none"><button class="btn sm ${n.done ? 'ghost' : ''}" data-a="done" data-id="${n.id}" data-v="${n.done ? 1 : 0}">${n.done ? 'Qaytarish' : 'Bajarildi'}</button>${del('notes', n.id)}</div>`)).join('') || '<div class="empty">Eslatma yo\'q.</div>');
   if (t === 'stol') H('tl', S.tables.map(x => row(`<b>${esc(x.name)}${S.orders.some(o => o.table === x.name) ? ' ●' : ''}</b>`, `<div class="row" style="flex:none"><button class="btn sm" data-a="tedit" data-id="${x.id}">Tahrirlash</button>${del('tables', x.id)}</div>`)).join('') || '<div class="empty">Stol yo\'q.</div>');
-  if (t === 'xar') H('el', S.expenses.map(x => row(`<div><b>${esc(x.name)}</b></div>`, `<div class="between" style="gap:10px"><b>${money(x.amount)}</b>${del('expenses', x.id)}</div>`)).join('') || '<div class="empty">Bu kun xarajat yo\'q.</div>');
+  if (t === 'xar') H('el', S.expenses.map(x => row(`<div><b>${esc(x.name)}</b>${x.by ? `<div class="mute">${esc(x.by)}</div>` : ''}</div>`, `<div class="between" style="gap:10px"><b>${money(x.amount)}</b>${S.me.role === 'kassir' ? '' : del('expenses', x.id)}</div>`)).join('') || '<div class="empty">Bu kun xarajat yo\'q.</div>');
   if (t === 'xod') H('xl2', S.users.map(u => row(`<div><b>${esc(u.name)}</b><div class="mute">${esc(u.login)} · ${esc(u.role)}</div></div>`, u.id === S.me.id ? '' : del('users', u.id))).join(''));
   if (t === 'hisob') {
     const rev = S.sales.reduce((s, x) => s + x.total, 0), cogs = S.sales.reduce((s, x) => s + x.items.reduce((a, i) => a + i.cost * i.qty, 0), 0), exp = S.expenses.reduce((s, x) => s + x.amount, 0), wg = S.wages.reduce((s, x) => s + x.amount, 0), totalDebt = S.debtSales.reduce((s, x) => s + x.total, 0) - S.debtPays.reduce((s, x) => s + x.amount, 0), by = k => S.sales.filter(x => x.pay === k).reduce((s, x) => s + x.total, 0), pr = rev - cogs - exp - wg, top = {};
