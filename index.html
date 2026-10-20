@@ -65,13 +65,15 @@ const val = id => $('#' + id).value.trim();
 const mail = l => l.toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@kafe.app';
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore.FieldValue, TS = firebase.firestore.Timestamp;
+db.settings({ experimentalForceLongPolling: true, merge: true });
+const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rj) => setTimeout(() => rj(new Error(label + ' javob bermadi (internetni tekshiring)')), ms))]);
 const S = { contacts: [], notes: [], debtSales: [], debtPays: [], wages: [], shiftList: [], contact: '', me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pay: 'naqd', cat: '', day: today(), tab: '', edit: null, img: '' };
 const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['kon','Kontakt'],['xar','Xarajat'],['hisob','Hisobot'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
 let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v6</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v7</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -79,9 +81,10 @@ async function doLogin() {
   const l = val('lg'), p = $('#pw').value, btn = $('#lgb'), m = $('#lm');
   if (!l || !p) return m.textContent = 'Login va parolni kiriting.';
   btn.disabled = true; m.textContent = 'Tekshirilmoqda...';
-  try { await auth.signInWithEmailAndPassword(mail(l), p); }
+  try { await withTimeout(auth.signInWithEmailAndPassword(mail(l), p), 20000, 'Kirish'); }
   catch (e) {
     btn.disabled = false;
+    if (!e.code) return m.textContent = 'Xato: ' + e.message;
     if (l.toLowerCase() === 'admin' && !/network|too-many|wrong-password|operation-not-allowed|configuration/.test(e.code)) {
       m.textContent = '';
       return ask("Asosiy hisob topilmadi. Birinchi marta bo'lsa, shu login-parol bilan yaratilsinmi?", async () => {
@@ -106,7 +109,8 @@ window.addEventListener('unhandledrejection', e => { const m = $('#lm'); if (m) 
 async function boot0(u) {
   unsubs.forEach(f => f()); unsubs = []; dayUnsubs.forEach(f => f()); dayUnsubs = [];
   if (!u) { S.me = null; return loginScreen(); }
-  let d; try { d = await db.collection('users').doc(u.uid).get(); } catch (e) { return loginScreen('Bazaga ulanib bo\'lmadi'); }
+  let d; { const m = $('#lm'); if (m) m.textContent = "Ma'lumot yuklanmoqda..."; }
+  try { d = await withTimeout(db.collection('users').doc(u.uid).get(), 20000, 'Baza'); } catch (e) { return loginScreen('Bazaga ulanib bo\'lmadi: ' + (e.code || e.message)); }
   if (!d.exists) { await auth.signOut(); return loginScreen("Bu hisob uchun ruxsat yo'q"); }
   S.me = { id: u.uid, ...d.data() };
   S.cart = {}; S.table = null; S.orderId = null;
