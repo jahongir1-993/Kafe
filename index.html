@@ -84,7 +84,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v24</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v25</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -230,6 +230,9 @@ function click(e) {
   else if (a === 'order') loadOrder(id);
   else if (a === 'xm') { S.xm = id; S.xc = ''; S.xp = 'naqd'; fill(); }
   else if (a === 'xp') { S.xp = id; fill(); }
+  else if (a === 'cpick') pickContact(S.contacts, c => { S.contact = c; fill(); });
+  else if (a === 'xpick') pickContact(S.contacts.filter(c => S.xm !== 'oylik' || c.type === 'ishchi'), c => { S.xc = c; fill(); });
+  else if (a === 'xcc') { S.xc = ''; fill(); }
   else if (a === 'xc') { S.xc = S.xc === id ? '' : id; fill(); }
   else if (a === 'xcadd') { const n = val('xcn'); if (!n) return note('Kontakt ismini kiriting.'); db.collection('contacts').add({ name: n, phone: val('xcp'), type: $('#xct').value }).then(r => { S.xc = r.id; fill(); }).catch(e => note('Saqlanmadi: ' + e.message)); }
   else if (a === 'wt') openTable(id);
@@ -267,6 +270,18 @@ function sendOrder() {
   if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }).catch(fail); }
   else db.collection('orders').add({ table: sab ? nextSaboy() : tb.name, takeaway: sab, items: it, total: sum(it), waiter: S.me.name, uid: S.me.id, status: 'open', ts: TS.now() }).catch(fail);
   leaveTable();
+}
+function pickContact(list, cb) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:99';
+  d.innerHTML = `<div class="card" style="width:100%;margin:0;max-height:80%;display:flex;flex-direction:column;border-radius:16px 16px 0 0"><div class="between" style="margin-bottom:8px"><b style="font-size:18px">Kontaktni tanlang</b><button class="btn sm ghost" data-x="1" style="color:var(--ink)">Yopish</button></div><input id="cps" placeholder="Qidirish..." style="margin-bottom:8px"><div id="cpl" style="overflow-y:auto;flex:1"></div></div>`;
+  const draw = () => {
+    const q = d.querySelector('#cps').value.trim().toLowerCase();
+    d.querySelector('#cpl').innerHTML = list.filter(c => !q || (c.name + ' ' + (c.phone || '')).toLowerCase().includes(q)).map(c => `<button class="tbc" data-id="${c.id}" style="width:100%;margin-bottom:8px;min-height:0"><b style="font-size:17px">${esc(c.name)}</b><small>${esc(c.phone || '')}${c.type ? ' · ' + c.type : ''}${debtOf(c.id) > 0 ? ' · Qarz: ' + money(debtOf(c.id)) : ''}</small></button>`).join('') || '<div class="empty">Kontakt topilmadi. Kontakt bo\'limida qo\'shing.</div>';
+  };
+  d.onclick = e => { if (e.target === d || e.target.dataset.x) return d.remove(); const b = e.target.closest('[data-id]'); if (b) { d.remove(); cb(b.dataset.id); } };
+  d.querySelector('#cps').oninput = draw;
+  document.body.appendChild(d); draw();
 }
 function addEntry() {
   const m = S.xm, n = val('en'), a = Math.round(+val('ea')), c = S.contacts.find(x => x.id === S.xc);
@@ -370,7 +385,7 @@ function fill() {
       const oo = S.orderId && S.orders.find(x => x.id === S.orderId), gone = S.orderId && !oo, it = items(), total = it.reduce((s, i) => s + i.qty * i.price, 0), ps = S.products.filter(p => !S.cat || p.cat === S.cat), ok = it.length && !gone ? '' : 'disabled';
       const title = sab ? (oo ? tl(oo.table) : 'Yangi saboy') : tl(tb.name);
       const pa = payAmts(total);
-      const pay = cash && it.length && !gone ? `<div class="card"><div class="seg">${['naqd', 'karta', 'terminal', 'qarz'].map(x => `<button data-a="pay" data-id="${x}" class="${S.pm.includes(x) ? 'on' : ''}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}</div>${S.pm.length > 1 ? S.pm.map((m, i) => `<div class="between" style="margin-top:8px"><span>${m[0].toUpperCase() + m.slice(1)}</span><input class="qi" style="width:150px" type="number" inputmode="numeric" data-pm="${m}" value="${pa.list[i][1]}"></div>`).join('') + (pa.over ? '<div class="neg" style="margin-top:6px">Summa jamidan oshib ketdi</div>' : '') : ''}${S.pm.includes('qarz') ? '<div class="chips" style="margin-top:8px">' + (S.contacts.map(c => `<button data-a="cont" data-id="${c.id}" class="${S.contact === c.id ? 'on' : ''}">${esc(c.name)}</button>`).join('') || '<span class="mute">Avval Kontakt bo\'limida kontakt qo\'shing.</span>') + '</div>' : ''}<div class="between"><span>Jami</span><span class="big">${money(total)}</span></div></div>` : '';
+      const pay = cash && it.length && !gone ? `<div class="card"><div class="seg">${['naqd', 'karta', 'terminal', 'qarz'].map(x => `<button data-a="pay" data-id="${x}" class="${S.pm.includes(x) ? 'on' : ''}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}</div>${S.pm.length > 1 ? S.pm.map((m, i) => `<div class="between" style="margin-top:8px"><span>${m[0].toUpperCase() + m.slice(1)}</span><input class="qi" style="width:150px" type="number" inputmode="numeric" data-pm="${m}" value="${pa.list[i][1]}"></div>`).join('') + (pa.over ? '<div class="neg" style="margin-top:6px">Summa jamidan oshib ketdi</div>' : '') : ''}${S.pm.includes('qarz') ? `<button class="btn" data-a="cpick" style="margin-top:8px;background:var(--card);color:var(--ink);border:1px solid var(--line)">${S.contact ? 'Kontakt: ' + esc((S.contacts.find(c => c.id === S.contact) || {}).name || '') + ' ▸' : 'Kontaktni tanlang ▸'}</button>` : ''}<div class="between"><span>Jami</span><span class="big">${money(total)}</span></div></div>` : '';
       const bar = oo && !it.length ? '<button class="btn bad" data-a="cancelorder">Zakazni bekor qilish</button>' : cash ? `<div class="row"><button class="btn" data-a="send" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" ${ok}>${oo ? 'Saqlash' : 'Yuborish'}</button><button class="btn" data-a="sell" ${ok || (pa.over ? 'disabled' : '')}>Sotish · ${money(total)}</button></div>` : `<button class="btn" data-a="send" ${ok}>${oo ? 'Saqlash' : 'Yuborish'} · ${money(total)}</button>`;
       H('zv', `<div class="between" style="margin-bottom:10px"><button class="btn sm ghost" data-a="wback" style="color:var(--ink)">← Orqaga</button><b style="font-size:18px">${esc(title)}</b><span class="mute">${oo ? esc(oo.waiter) : 'Yangi zakaz'}</span></div>`
         + (gone ? '<div class="card neg"><b>Bu zakaz yopilgan yoki bekor qilingan.</b> Orqaga qayting.</div>' : '')
@@ -410,7 +425,7 @@ function fill() {
   if (t === 'xar') {
     const cash = S.me.role === 'kassir', xm = S.xm, tt = { xarajat: 'Kimga berildi (ixtiyoriy)', oylik: 'Qaysi xodimga oylik', qarz: 'Qarzdor kim pul berdi' }[xm];
     const cl = S.contacts.filter(c => xm !== 'oylik' || c.type === 'ishchi');
-    H('xf', `<div class="seg">${[['xarajat', 'Xarajat'], ['oylik', 'Oylik'], ['qarz', 'Qarz qaytdi']].map(x => `<button data-a="xm" data-id="${x[0]}" class="${xm === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div><div class="mute" style="margin:10px 0 6px">${tt}</div><div class="chips">${cl.map(c => { const d = xm === 'qarz' && !cash ? debtOf(c.id) : 0; return `<button data-a="xc" data-id="${c.id}" class="${S.xc === c.id ? 'on' : ''}">${esc(c.name)}${d > 0 ? ' · ' + money(d) : ''}</button>`; }).join('') || '<span class="mute">Kontakt yo\'q.</span>'}</div><div class="mute" style="margin:10px 0 6px">${xm === 'qarz' ? 'Qaysi usulda oldingiz' : 'Qaysi usulda berdingiz'}</div><div class="seg">${(xm === 'qarz' ? ['naqd', 'karta', 'terminal'] : ['naqd', 'karta']).map(k => `<button data-a="xp" data-id="${k}" class="${S.xp === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div><details style="margin:8px 0"><summary class="mute">+ Yangi kontakt</summary><input id="xcn" placeholder="Ismi" style="margin-top:8px"><input id="xcp" type="tel" placeholder="Telefon raqami"><select id="xct"><option value="mijoz">Mijoz</option><option value="ishchi"${xm === 'oylik' ? ' selected' : ''}>Ishchi</option></select><button class="btn sm" data-a="xcadd">Kontaktni saqlash</button></details>`);
+    H('xf', `<div class="seg">${[['xarajat', 'Xarajat'], ['oylik', 'Oylik'], ['qarz', 'Qarz qaytdi']].map(x => `<button data-a="xm" data-id="${x[0]}" class="${xm === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div><div class="mute" style="margin:10px 0 6px">${tt}</div><div class="row"><button class="btn" data-a="xpick" style="background:var(--card);color:var(--ink);border:1px solid var(--line)">${S.xc ? esc((S.contacts.find(c => c.id === S.xc) || {}).name || '') + ' ▸' : 'Kontaktni tanlang ▸'}</button>${S.xc && xm === 'xarajat' ? '<button class="btn sm ghost" data-a="xcc" style="flex:none">✕</button>' : ''}</div><div class="mute" style="margin:10px 0 6px">${xm === 'qarz' ? 'Qaysi usulda oldingiz' : 'Qaysi usulda berdingiz'}</div><div class="seg">${(xm === 'qarz' ? ['naqd', 'karta', 'terminal'] : ['naqd', 'karta']).map(k => `<button data-a="xp" data-id="${k}" class="${S.xp === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div><details style="margin:8px 0"><summary class="mute">+ Yangi kontakt</summary><input id="xcn" placeholder="Ismi" style="margin-top:8px"><input id="xcp" type="tel" placeholder="Telefon raqami"><select id="xct"><option value="mijoz">Mijoz</option><option value="ishchi"${xm === 'oylik' ? ' selected' : ''}>Ishchi</option></select><button class="btn sm" data-a="xcadd">Kontaktni saqlash</button></details>`);
     $('#en').placeholder = xm === 'xarajat' ? 'Nima uchun' : 'Izoh (ixtiyoriy)';
     H('el', logs(S.me.role === 'admin'));
   }
