@@ -84,7 +84,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v26</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v27</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -226,7 +226,7 @@ function click(e) {
   else if (a === 'plus') { S.cart[id]++; S.dirty = true; fill(); }
   else if (a === 'cat') { S.cat = id; fill(); }
   else if (a === 'tbl') { const tb = S.tables.find(x => x.id === id), o = tb && S.orders.find(x => x.table === tb.name); if (o) return loadOrder(o.id, S.me.role === 'ofitsant' && !S.orderId); if (S.orderId) S.cart = {}; S.table = id; S.orderId = null; fill(); }
-  else if (a === 'pay') { togglePay(id); fill(); }
+  else if (a === 'pay') { if (id === 'aralash') { if (!S.mix) { S.mix = true; S.pm = ['naqd', 'karta', 'terminal', 'qarz']; S.pa = { naqd: items().reduce((s, i) => s + i.qty * i.price, 0) }; } } else { S.mix = false; S.pm = [id]; S.pa = {}; } fill(); }
   else if (a === 'order') loadOrder(id);
   else if (a === 'xm') { S.xm = id; S.xc = ''; S.xp = 'naqd'; fill(); }
   else if (a === 'xp') { S.xp = id; fill(); }
@@ -334,7 +334,7 @@ async function backTable() {
   if (S.orderId) { try { await db.collection('orders').doc(S.orderId).update({ status: 'cancelled' }); } catch (e) { return note('Xato: ' + e.message); } }
   leaveTable();
 }
-function leaveTable() { S.cart = {}; S.table = null; S.orderId = null; S.dirty = false; S.pm = ['naqd']; S.pa = {}; S.contact = ''; fill(); }
+function leaveTable() { S.cart = {}; S.table = null; S.orderId = null; S.dirty = false; S.pm = ['naqd']; S.pa = {}; S.mix = false; S.contact = ''; fill(); }
 const sig = l => l.map(i => i.id + ':' + i.qty).sort().join('|');
 function loadOrder(id, keep) { const o = S.orders.find(x => x.id === id); if (!o) return; const old = keep ? S.cart : {}; S.cart = {}; o.items.forEach(i => S.cart[i.id] = i.qty); Object.keys(old).forEach(k => S.cart[k] = (S.cart[k] || 0) + old[k]); S.orderId = id; S.orderSig = sig(o.items); S.table = null; fill(); }
 const items = () => Object.keys(S.cart).map(id => { const p = S.products.find(x => x.id === id); return p && { id, name: p.name, qty: S.cart[id], price: p.price, cost: p.cost || 0 }; }).filter(Boolean);
@@ -354,7 +354,7 @@ const debtOf = id => S.debtSales.filter(x => x.contactId === id).reduce((s, x) =
 async function sell() {
   const it = items(); if (!it.length) return;
   if (!S.shiftList.length) return note('Avval kassani oching.');
-  if (S.pm.includes('qarz') && !S.contact) return note('Qarzga sotish uchun kontaktni tanlang.');
+  { const q = payAmts(it.reduce((s, i) => s + i.qty * i.price, 0)).list.find(e => e[0] === 'qarz'); if (q && q[1] > 0 && !S.contact) return note('Qarzga sotish uchun kontaktni tanlang.'); }
   const o = S.orders.find(x => x.id === S.orderId), tb = S.tables.find(x => x.id === S.table);
   if (S.orderId && !o) { leaveTable(); return note('Bu zakaz allaqachon yopilgan.'); }
   if (o && sig(o.items) !== S.orderSig) { reopen(); return note("Zakazga qo'shimcha ovqat kiritilgan. Yangilandi, tekshirib qayta Sotish bosing."); }
@@ -385,7 +385,7 @@ function fill() {
       const oo = S.orderId && S.orders.find(x => x.id === S.orderId), gone = S.orderId && !oo, it = items(), total = it.reduce((s, i) => s + i.qty * i.price, 0), ps = S.products.filter(p => !S.cat || p.cat === S.cat), ok = it.length && !gone ? '' : 'disabled';
       const title = sab ? (oo ? tl(oo.table) : 'Yangi saboy') : tl(tb.name);
       const pa = payAmts(total);
-      const pay = cash && it.length && !gone ? `<div class="card"><div class="seg">${['naqd', 'karta', 'terminal', 'qarz'].map(x => `<button data-a="pay" data-id="${x}" class="${S.pm.includes(x) ? 'on' : ''}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}</div>${S.pm.length > 1 ? S.pm.map((m, i) => `<div class="between" style="margin-top:8px"><span>${m[0].toUpperCase() + m.slice(1)}</span><input class="qi" style="width:150px" type="number" inputmode="numeric" data-pm="${m}" value="${pa.list[i][1]}"></div>`).join('') + (pa.over ? '<div class="neg" style="margin-top:6px">Summa jamidan oshib ketdi</div>' : '') : ''}${S.pm.includes('qarz') ? `<button class="btn" data-a="cpick" style="margin-top:8px;background:var(--card);color:var(--ink);border:1px solid var(--line)">${S.contact ? 'Kontakt: ' + esc((S.contacts.find(c => c.id === S.contact) || {}).name || '') + ' ▸' : 'Kontaktni tanlang ▸'}</button>` : ''}<div class="between"><span>Jami</span><span class="big">${money(total)}</span></div></div>` : '';
+      const pay = cash && it.length && !gone ? `<div class="card"><div class="seg">${['naqd', 'karta', 'terminal', 'qarz', 'aralash'].map(x => `<button data-a="pay" data-id="${x}" style="font-size:14px;padding:10px 2px" class="${(x === 'aralash' ? S.mix : !S.mix && S.pm.includes(x)) ? 'on' : ''}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}</div>${S.pm.length > 1 ? S.pm.map((m, i) => `<div class="between" style="margin-top:8px"><span>${m[0].toUpperCase() + m.slice(1)}</span><input class="qi" style="width:150px" type="number" inputmode="numeric" data-pm="${m}" value="${pa.list[i][1]}"></div>`).join('') + (pa.over ? '<div class="neg" style="margin-top:6px">Summa jamidan oshib ketdi</div>' : '') + (S.mix ? '<div class="mute" style="margin-top:6px">Qarz qolgan summa bo\'yicha o\'zi hisoblanadi.</div>' : '') : ''}${S.pm.includes('qarz') && (S.pm.length === 1 || (pa.list.find(e => e[0] === 'qarz') || [0, 0])[1] > 0) ? `<button class="btn" data-a="cpick" style="margin-top:8px;background:var(--card);color:var(--ink);border:1px solid var(--line)">${S.contact ? 'Kontakt: ' + esc((S.contacts.find(c => c.id === S.contact) || {}).name || '') + ' ▸' : 'Kontaktni tanlang ▸'}</button>` : ''}<div class="between"><span>Jami</span><span class="big">${money(total)}</span></div></div>` : '';
       const bar = oo && !it.length ? '<button class="btn bad" data-a="cancelorder">Zakazni bekor qilish</button>' : cash ? `<div class="row"><button class="btn" data-a="send" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" ${ok}>${oo ? 'Saqlash' : 'Yuborish'}</button><button class="btn" data-a="sell" ${ok || (pa.over ? 'disabled' : '')}>Sotish · ${money(total)}</button></div>` : `<button class="btn" data-a="send" ${ok}>${oo ? 'Saqlash' : 'Yuborish'} · ${money(total)}</button>`;
       H('zv', `<div class="between" style="margin-bottom:10px"><button class="btn sm ghost" data-a="wback" style="color:var(--ink)">← Orqaga</button><b style="font-size:18px">${esc(title)}</b><span class="mute">${oo ? esc(oo.waiter) : 'Yangi zakaz'}</span></div>`
         + (gone ? '<div class="card neg"><b>Bu zakaz yopilgan yoki bekor qilingan.</b> Orqaga qayting.</div>' : '')
