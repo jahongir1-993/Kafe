@@ -87,7 +87,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v39</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v40</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -154,7 +154,7 @@ function listenDay() {
   dayUnsubs.push(q('sales').onSnapshot(s => { S.sales = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
 }
 function showTab(t) {
-  S.tab = t; S.editTable = null; try { localStorage.setItem('tab', t); } catch (e) {}
+  S.tab = t; S.kh = null; S.editTable = null; try { localStorage.setItem('tab', t); } catch (e) {}
   $('#nav').innerHTML = TABS[S.me.role].map(x => `<button data-t="${x[0]}" class="${x[0] === t ? 'on' : ''}">${x[1]}</button>`).join('') + '<button data-t="out">Chiqish</button>';
   const sell = `<div id="oo"></div><div id="tb" class="chips"></div><div id="cc" class="chips"></div><div id="grid" class="grid"></div><div id="cart" class="card"></div>`;
   const F = {
@@ -165,7 +165,7 @@ function showTab(t) {
     hisob: `<h2>Hisobot</h2><input id="rd" type="date" value="${S.day}"><div id="rb"></div>`,
     sklad: `<h2>Sklad</h2><input id="skq" placeholder="Qidirish..."><div id="skl"></div>`,
     tarix: `<h2>Tarix</h2><input id="td" type="date" value="${S.hday}"><div id="tr"></div>`,
-    kon: `<h2>Yangi kontakt</h2><div class="card"><input id="kn" placeholder="Ismi"><input id="kp" type="tel" placeholder="Telefon raqami"><select id="kt"><option value="mijoz">Mijoz</option><option value="ishchi">Ishchi</option></select><button class="btn" id="kb2">Qo'shish</button></div><div id="kl"></div>`,
+    kon: `<div id="kform"><h2>Yangi kontakt</h2><div class="card"><input id="kn" placeholder="Ismi"><input id="kp" type="tel" placeholder="Telefon raqami"><select id="kt"><option value="mijoz">Mijoz</option><option value="ishchi">Ishchi</option></select><button class="btn" id="kb2">Qo'shish</button></div></div><div id="kl"></div>`,
     esl: `<h2>Eslatma</h2><div class="card"><input id="nt" placeholder="Masalan: ertaga go'sht olaman"><input id="nd" type="date"><button class="btn" id="nb">Qo'shish</button></div><div id="nl"></div>`,
     xod: `<h2>Yangi xodim</h2><div class="card"><input id="xn" placeholder="Ismi"><input id="xl" placeholder="Login" autocapitalize="none"><input id="xp" placeholder="Parol (kamida 6 belgi)"><select id="xr"><option value="kassir">Kassir</option><option value="ofitsant">Ofitsant</option><option value="boss">Boss</option></select><button class="btn" id="xb">Yaratish</button></div><h2>Xodimlar</h2><div id="xl2"></div>`
   };
@@ -239,6 +239,9 @@ function click(e) {
   else if (a === 'rcnewp') newProductDlg(i => { S.rc.items.push(i); fill(); });
   else if (a === 'rcsave') saveReceipt();
   else if (a === 'redit') editReceipt(id);
+  else if (a === 'chist') openKH(id);
+  else if (a === 'chback') { S.kh = null; fill(); }
+  else if (a === 'ccopy') copyKH();
   else if (a === 'sedit') editSale(id);
   else if (a === 'cartopen') { S.cartOpen = !S.cartOpen; fill(); }
   else if (a === 'cat') { S.cat = id; fill(); const e = $('#catv'); if (e) e.scrollIntoView({ block: 'start' }); }
@@ -351,6 +354,44 @@ function pickList(title, rows, cb) {
   const draw = () => { const q = d.querySelector('#pls').value.trim().toLowerCase(); d.querySelector('#pll').innerHTML = rows.filter(r => !q || r.name.toLowerCase().includes(q)).map(r => `<button class="tbc" data-id="${r.id}" style="width:100%;margin-bottom:8px;min-height:0"><b style="font-size:17px">${esc(r.name)}</b><small>${esc(r.sub || '')}</small></button>`).join('') || '<div class="empty">Topilmadi.</div>'; };
   d.onclick = e => { if (e.target === d || e.target.dataset.x) return d.remove(); const b = e.target.closest('[data-id]'); if (b) { d.remove(); cb(b.dataset.id); } };
   d.querySelector('#pls').oninput = draw; document.body.appendChild(d); draw();
+}
+const dtf = ts => ts && ts.toDate ? ts.toDate().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+async function openKH(id) {
+  S.kh = { id, loading: true }; fill(); scrollTo(0, 0);
+  try {
+    const q = c => db.collection(c).where('contactId', '==', id).get().then(r => r.docs.map(d => ({ id: d.id, ...d.data() })));
+    const [sales, pays, wages, exps] = await Promise.all([q('sales'), q('debtpays'), q('wages'), q('expenses')]);
+    const need = [...new Set(sales.filter(x => !(x.items && x.items.length) && x.group).map(x => x.group))], its = {};
+    for (let i = 0; i < need.length; i += 10) { const r = await db.collection('sales').where('group', 'in', need.slice(i, i + 10)).get(); r.docs.forEach(d => { const x = d.data(); if (x.items && x.items.length) its[x.group] = x.items; }); }
+    sales.forEach(x => { if (!(x.items && x.items.length) && its[x.group]) x.items = its[x.group]; });
+    if (S.kh && S.kh.id === id) S.kh = { id, sales, pays, wages, exps };
+  } catch (e) { if (S.kh && S.kh.id === id) S.kh = { id, err: e.message }; }
+  fill();
+}
+function khRows(k) {
+  const ms = x => x.ts && x.ts.toMillis ? x.ts.toMillis() : 0, rows = [];
+  k.sales.filter(x => x.pay === 'qarz').forEach(x => rows.push({ ts: x.ts, kind: 'olgan', text: (x.items || []).map(i => i.name + ' × ' + i.qty).join(', ') || 'Qarzga sotuv', sub: x.where || '', amt: x.total, d: x.total }));
+  k.pays.forEach(x => rows.push({ ts: x.ts, kind: 'qaytardi', text: "Qarz to'lovi" + (x.method ? ' (' + x.method + ')' : ''), sub: '', amt: x.amount, d: -x.amount }));
+  k.wages.forEach(x => rows.push({ ts: x.ts, kind: 'oylik', text: 'Oylik berildi', sub: '', amt: x.amount, d: 0 }));
+  k.exps.forEach(x => rows.push({ ts: x.ts, kind: 'chiqim', text: x.name || "To'lov", sub: '', amt: x.amount, d: 0 }));
+  rows.sort((a, b) => ms(a) - ms(b)); let bal = 0; rows.forEach(r => { bal += r.d; r.bal = bal; }); return rows;
+}
+function khSum(rows) { const sm = k => rows.filter(r => r.kind === k).reduce((s, r) => s + r.amt, 0); return { olgan: sm('olgan'), qaytardi: sm('qaytardi'), oylik: sm('oylik'), chiqim: sm('chiqim') }; }
+function khView() {
+  const k = S.kh, c = S.contacts.find(x => x.id === k.id) || { name: '?', phone: '' }, gb = 'style="background:var(--card);color:var(--ink);border:1px solid var(--line)"';
+  if (k.loading) return '<button class="btn sm" data-a="chback" ' + gb + '>← Orqaga</button><div class="empty">Yuklanmoqda...</div>';
+  if (k.err) return '<button class="btn sm" data-a="chback" ' + gb + `>← Orqaga</button><div class="card neg">Xato: ${esc(k.err)}</div>`;
+  const rows = khRows(k), t = khSum(rows), col = { olgan: 'neg', qaytardi: 'pos' };
+  return `<div class="between" style="margin-bottom:10px"><button class="btn sm" data-a="chback" ${gb}>← Orqaga</button><button class="btn sm" data-a="ccopy">Nusxalash</button></div>`
+    + `<div class="card"><b style="font-size:18px">${esc(c.name)}</b><div class="mute">${esc(c.phone || '')}</div><div class="between" style="margin-top:8px"><span>Olgan (qarzga)</span><b>${money(t.olgan)}</b></div><div class="between"><span>Qaytargan</span><b>${money(t.qaytardi)}</b></div><div class="between"><span>Qolgan qarz</span><b class="${t.olgan - t.qaytardi > 0 ? 'neg' : ''}">${money(t.olgan - t.qaytardi)}</b></div>${t.oylik ? `<div class="between"><span>Oylik berilgan</span><b>${money(t.oylik)}</b></div>` : ''}${t.chiqim ? `<div class="between"><span>Boshqa to'lovlar</span><b>${money(t.chiqim)}</b></div>` : ''}</div>`
+    + (rows.length ? rows.slice().reverse().map(r => `<div class="card"><div class="between"><span class="mute">${dtf(r.ts)}</span><b class="${col[r.kind] || ''}">${r.d > 0 ? '+' : r.d < 0 ? '−' : ''}${money(r.amt)}</b></div><div style="margin-top:4px">${esc(r.text)}</div><div class="mute" style="margin-top:4px">${esc(r.sub)}${r.sub && r.d ? ' · ' : ''}${r.d ? 'Qoldiq: ' + money(r.bal) : ''}</div></div>`).join('') : '<div class="empty">Hali yozuv yo\'q.</div>');
+}
+function copyKH() {
+  const k = S.kh; if (!k || !k.sales) return; const c = S.contacts.find(x => x.id === k.id) || { name: '?', phone: '' }, rows = khRows(k), t = khSum(rows);
+  const txt = c.name + (c.phone ? ' (' + c.phone + ')' : '') + '\nHisob-kitob: ' + dtf({ toDate: () => new Date() }) + '\n\n' + rows.map(r => dtf(r.ts) + ' | ' + r.text + ' | ' + (r.d > 0 ? '+' : r.d < 0 ? '-' : '') + money(r.amt) + (r.d ? ' | qoldiq ' + money(r.bal) : '')).join('\n') + '\n\nOlgan: ' + money(t.olgan) + '\nQaytargan: ' + money(t.qaytardi) + '\nQolgan qarz: ' + money(t.olgan - t.qaytardi);
+  const done = () => note('Nusxalandi. Telegram yoki boshqa joyga qo\'yishingiz mumkin.');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, () => fb()); else fb();
+  function fb() { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { note(txt); } ta.remove(); }
 }
 function editSale(key) {
   const g = (S.hg || {})[key]; if (!g) return;
@@ -572,7 +613,8 @@ function fill() {
     H('cl', S.cats.map(c => `<span class="between" style="margin-bottom:6px">${esc(c.name)}${del('cats', c.id)}</span>`).join('') || '<span class="mute">Kategoriya yo\'q.</span>');
     H('pl', S.products.map(p => `<div class="card"><div class="between"><div class="row" style="flex:none">${p.img ? `<img class="th" src="${p.img}" alt="">` : ''}<div><b>${esc(p.name)}</b><div class="mute">${money(p.price)} · tannarx ${money(p.cost)}</div></div></div><div class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><button class="btn sm" data-a="edit" data-id="${p.id}">Tahrirlash</button>${del('products', p.id)}</div></div>`).join('') || '<div class="empty">Tovar yo\'q.</div>');
   }
-  if (t === 'kon') H('kl', S.contacts.map(c => `<div class="card"><div class="between"><div><b>${esc(c.name)}</b><div class="mute">${esc(c.phone)} · ${c.type}</div></div>${del('contacts', c.id)}</div><div class="between" style="margin-top:6px"><span>Qarz</span><b class="${debtOf(c.id) > 0 ? 'neg' : ''}">${money(debtOf(c.id))}</b></div></div>`).join('') || '<div class="empty">Kontakt yo\'q.</div>');
+  if (t === 'kon') { const f = $('#kform'); if (f) f.style.display = S.kh ? 'none' : ''; }
+  if (t === 'kon') H('kl', S.kh ? khView() : S.contacts.map(c => `<div class="card"><div class="between"><div><b>${esc(c.name)}</b><div class="mute">${esc(c.phone)} · ${c.type}</div></div>${del('contacts', c.id)}</div><div class="between" style="margin-top:6px"><span>Qarz</span><b class="${debtOf(c.id) > 0 ? 'neg' : ''}">${money(debtOf(c.id))}</b></div><button class="btn" data-a="chist" data-id="${c.id}" style="margin-top:8px;background:var(--card);color:var(--ink);border:1px solid var(--line)">Tarix</button></div>`).join('') || '<div class="empty">Kontakt yo\'q.</div>');
   if (t === 'esl') H('nl', S.notes.slice().sort((a, b) => (a.done - b.done) || String(a.date || '9').localeCompare(String(b.date || '9'))).map(n => row(`<div><b style="${n.done ? 'text-decoration:line-through;opacity:.5' : ''}">${esc(n.text)}</b>${n.date ? `<div class="mute">${esc(n.date)}</div>` : ''}</div>`, `<div class="row" style="flex:none"><button class="btn sm ${n.done ? 'ghost' : ''}" data-a="done" data-id="${n.id}" data-v="${n.done ? 1 : 0}">${n.done ? 'Qaytarish' : 'Bajarildi'}</button>${del('notes', n.id)}</div>`)).join('') || '<div class="empty">Eslatma yo\'q.</div>');
   if (t === 'stol') H('tl', S.tables.map(x => row(`<b>${esc(x.name)}${S.orders.some(o => o.table === x.name) ? ' ●' : ''}</b>`, `<div class="row" style="flex:none"><button class="btn sm" data-a="tedit" data-id="${x.id}">Tahrirlash</button>${del('tables', x.id)}</div>`)).join('') || '<div class="empty">Stol yo\'q.</div>');
   if (t === 'xar') {
