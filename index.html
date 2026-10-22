@@ -87,7 +87,7 @@ const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore
 try { db.settings({ experimentalForceLongPolling: true }); } catch (e) { console.warn(e); }
 const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rj) => setTimeout(() => rj(new Error(label + ' javob bermadi (internetni tekshiring)')), ms))]);
 const S = { contacts: [], notes: [], debtSales: [], debtPays: [], wages: [], shiftList: [], contact: '', me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pm: ['naqd'], pa: {}, cat: '', day: today(), tab: '', edit: null, img: '', editTable: null, orderSig: '', dirty: false, hday: today(), hist: null, dpDay: [], xm: 'xarajat', xc: '', xp: 'naqd' };
-const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['sklad','Sklad'],['stol','Stol'],['kon','Kontakt'],['xar',"To'lov"],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['sklad','Sklad'],['xar',"To'lov"],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
+const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['sklad','Sklad'],['stol','Stol'],['kon','Kontakt'],['xar',"To'lov"],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['sklad','Sklad'],['xar',"To'lov"],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Hisobot'],['tarix','Tarix']] };
 let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
