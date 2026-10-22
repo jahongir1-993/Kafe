@@ -87,7 +87,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v37</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v39</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -132,12 +132,14 @@ async function boot0(u) {
   if (!TABS[S.me.role]) { const bad = JSON.stringify(d.data()); await auth.signOut(); return loginScreen("Rol noto'g'ri yozilgan. Bazadagi ma'lumot: " + bad); }
   S.cart = {}; S.table = null; S.orderId = null;
   const L = (c, k, q) => unsubs.push((q || db.collection(c)).onSnapshot(s => { S[k] = s.docs.map(x => ({ id: x.id, ...x.data() })); if (k === 'tables') S.tables.sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true })); fill(); }, e => note('Baza xatosi: ' + e.message)));
+  S.receipts = []; try { S.rc = JSON.parse(localStorage.getItem('rc-draft')) || null; } catch (e) { S.rc = null; }
+  if (S.me.role === 'admin') L('receipts', 'receipts', db.collection('receipts').orderBy('ts', 'desc').limit(60));
   L('products', 'products', db.collection('products').orderBy('name')); L('cats', 'cats'); L('tables', 'tables', db.collection('tables').orderBy('n'));
   L('orders', 'orders', db.collection('orders').where('status', '==', 'open'));
   L('contacts', 'contacts', db.collection('contacts').orderBy('name')); L('shifts', 'shiftList', db.collection('shifts').where('closed', '==', false));
   if (['admin','boss','kassir'].includes(S.me.role)) { L('debtpays', 'debtPays'); L('sales', 'debtSales', db.collection('sales').where('pay', '==', 'qarz')); }
   if (S.me.role === 'admin') { L('users', 'users'); L('notes', 'notes'); }
-  listenDay(); showTab(TABS[S.me.role][0][0]);
+  listenDay(); { let last = null; try { last = localStorage.getItem('tab'); } catch (e) {} showTab(TABS[S.me.role].some(x => x[0] === last) ? last : TABS[S.me.role][0][0]); }
 }
 function listenDay() {
   dayUnsubs.forEach(f => f()); dayUnsubs = [];
@@ -152,12 +154,12 @@ function listenDay() {
   dayUnsubs.push(q('sales').onSnapshot(s => { S.sales = s.docs.map(d => ({ id: d.id, ...d.data() })); fill(); }));
 }
 function showTab(t) {
-  S.tab = t; S.editTable = null;
+  S.tab = t; S.editTable = null; try { localStorage.setItem('tab', t); } catch (e) {}
   $('#nav').innerHTML = TABS[S.me.role].map(x => `<button data-t="${x[0]}" class="${x[0] === t ? 'on' : ''}">${x[1]}</button>`).join('') + '<button data-t="out">Chiqish</button>';
   const sell = `<div id="oo"></div><div id="tb" class="chips"></div><div id="cc" class="chips"></div><div id="grid" class="grid"></div><div id="cart" class="card"></div>`;
   const F = {
     kassa: '<div id="sh"></div><div id="zv"></div>', zakaz: '<div id="zv"></div>',
-    tov: `<h2 id="ph">Yangi tovar</h2><div class="card"><input id="pn" placeholder="Nomi"><select id="pc"></select><div class="row"><input id="pp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="pk" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="ps" type="number" inputmode="decimal" placeholder="Qoldiq (soni)"><div class="row" style="margin-bottom:8px"><img id="pi" class="th" alt=""><input id="pf" type="file" accept="image/*" style="margin:0"></div><button class="btn" id="pb">Saqlash</button></div><h2>Kirim (mavjud tovarga)</h2><div class="card"><select id="ks"></select><div class="row"><input id="kq" type="number" inputmode="decimal" placeholder="Soni" style="margin:0"><button class="btn sm" id="kb">Kirim</button></div></div><h2>Kategoriyalar</h2><div class="card"><div class="row"><input id="cn" placeholder="Yangi kategoriya" style="margin:0"><button class="btn sm" id="cb">Qo'shish</button></div><div id="cl" style="margin-top:8px"></div></div><h2>Tovarlar</h2><div id="pl"></div>`,
+    tov: `<h2>Kirim</h2><div id="rc"></div><div id="rh"></div><h2 id="ph">Yangi tovar</h2><div class="card"><input id="pn" placeholder="Nomi"><select id="pc"></select><div class="row"><input id="pp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="pk" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="ps" type="number" inputmode="decimal" placeholder="Qoldiq (soni)"><div class="row" style="margin-bottom:8px"><img id="pi" class="th" alt=""><input id="pf" type="file" accept="image/*" style="margin:0"></div><button class="btn" id="pb">Saqlash</button></div><h2>Kategoriyalar</h2><div class="card"><div class="row"><input id="cn" placeholder="Yangi kategoriya" style="margin:0"><button class="btn sm" id="cb">Qo'shish</button></div><div id="cl" style="margin-top:8px"></div></div><h2>Tovarlar</h2><div id="pl"></div>`,
     stol: `<h2 id="th">Stollar</h2><div class="card"><div class="row"><input id="tn" placeholder="Stol raqami yoki nomi" style="margin:0"><button class="btn sm" id="tb2">Qo'shish</button><button class="btn sm ghost" id="tc" hidden>Bekor</button></div></div><div id="tl"></div>`,
     xar: `<h2>To'lov</h2><div class="card"><div id="xf"></div><input id="en" placeholder="Nima uchun"><input id="ea" type="number" inputmode="decimal" placeholder="Summa"><button class="btn" id="eb">Qo'shish</button></div><div id="el"></div>`,
     hisob: `<h2>Hisobot</h2><input id="rd" type="date" value="${S.day}"><div id="rb"></div>`,
@@ -173,7 +175,7 @@ $('#nav').onclick = e => { const t = e.target.dataset.t; if (t === 'out') auth.s
 function bind(t) {
   const b = (id, f) => $('#' + id) && ($('#' + id).onclick = f);
   if (t === 'tov') {
-    b('pb', saveProduct); b('kb', addStock); b('cb', async () => { const n = val('cn'); if (n) { await db.collection('cats').add({ name: n }); $('#cn').value = ''; } });
+    b('pb', saveProduct); b('cb', async () => { const n = val('cn'); if (n) { await db.collection('cats').add({ name: n }); $('#cn').value = ''; } });
     $('#pf').onchange = e => resize(e.target.files[0]);
   }
   if (t === 'stol') { b('tb2', saveTable); b('tc', resetTable); }
@@ -229,6 +231,14 @@ function click(e) {
   if (a === 'add') { const p = S.products.find(x => x.id === id); S.cart[id] = (S.cart[id] || 0) + 1; S.dirty = true; fill(); }
   else if (a === 'minus') { if (--S.cart[id] <= 0) delete S.cart[id]; S.dirty = true; fill(); }
   else if (a === 'plus') { S.cart[id]++; S.dirty = true; fill(); }
+  else if (a === 'rcnew') { S.rc = { items: [] }; fill(); }
+  else if (a === 'rccancel') ask("Kirim ro'yxati bekor qilinsinmi?", () => { S.rc = null; fill(); });
+  else if (a === 'rcm') { const i = S.rc.items[+id]; if (--i.qty <= 0) S.rc.items.splice(+id, 1); fill(); }
+  else if (a === 'rcp') { S.rc.items[+id].qty++; fill(); }
+  else if (a === 'rcadd') pickList('Tovar tanlang', S.products.map(p => ({ id: p.id, name: p.name, sub: 'Qoldiq: ' + (p.stock || 0) })), pid => { const p = S.products.find(x => x.id === pid), ex = S.rc.items.find(i => i.id === pid); if (!p) return; if (ex) ex.qty++; else S.rc.items.push({ id: pid, name: p.name, qty: 1 }); fill(); });
+  else if (a === 'rcnewp') newProductDlg(i => { S.rc.items.push(i); fill(); });
+  else if (a === 'rcsave') saveReceipt();
+  else if (a === 'redit') editReceipt(id);
   else if (a === 'sedit') editSale(id);
   else if (a === 'cartopen') { S.cartOpen = !S.cartOpen; fill(); }
   else if (a === 'cat') { S.cat = id; fill(); const e = $('#catv'); if (e) e.scrollIntoView({ block: 'start' }); }
@@ -277,6 +287,62 @@ function sendOrder() {
   if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }).catch(fail); }
   else db.collection('orders').add({ table: sab ? nextSaboy() : tb.name, takeaway: sab, items: it, total: sum(it), waiter: S.me.name, uid: S.me.id, status: 'open', ts: TS.now() }).catch(fail);
   leaveTable();
+}
+function rcSave() { try { if (S.rc) localStorage.setItem('rc-draft', JSON.stringify(S.rc)); else localStorage.removeItem('rc-draft'); } catch (e) {} }
+function newProductDlg(cb) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:99';
+  d.innerHTML = `<div class="card" style="width:100%;margin:0;max-height:90%;overflow-y:auto;border-radius:16px 16px 0 0"><div class="between" style="margin-bottom:8px"><b style="font-size:18px">Yangi tovar</b><button class="btn sm ghost" data-x="1" style="color:var(--ink)">Yopish</button></div><input id="npn" placeholder="Nomi"><select id="npc"><option value="">Kategoriyasiz</option>${S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><div class="row"><input id="npp" type="number" inputmode="decimal" placeholder="Sotish narxi"><input id="npk" type="number" inputmode="decimal" placeholder="Tannarxi"></div><input id="npq" type="number" inputmode="numeric" placeholder="Kirim soni"><button class="btn" data-ok="1">Ro'yxatga qo'shish</button></div>`;
+  d.onclick = e => {
+    const t = e.target; if (t === d || t.dataset.x) return d.remove();
+    if (!t.dataset.ok) return;
+    const v = id => d.querySelector('#' + id).value.trim(), it = { isNew: true, name: v('npn'), cat: v('npc'), price: +v('npp'), cost: +v('npk') || 0, qty: Math.floor(+v('npq')) };
+    if (!it.name || !(it.price > 0) || !(it.qty > 0)) return note('Nomi, sotish narxi va sonini kiriting.');
+    d.remove(); cb(it);
+  };
+  document.body.appendChild(d);
+}
+function saveReceipt() {
+  const r = S.rc; if (!r || !r.items.length) return note("Ro'yxat bo'sh.");
+  const b = db.batch(), out = [];
+  r.items.forEach(i => {
+    if (i.isNew) { const ref = db.collection('products').doc(); b.set(ref, { name: i.name, cat: i.cat || '', price: i.price, cost: i.cost || 0, stock: i.qty }); out.push({ id: ref.id, name: i.name, qty: i.qty, isNew: true }); }
+    else if (S.products.some(p => p.id === i.id)) { b.update(db.collection('products').doc(i.id), { stock: FV.increment(i.qty) }); out.push({ id: i.id, name: i.name, qty: i.qty }); }
+  });
+  if (!out.length) return note('Tovarlar topilmadi.');
+  b.set(db.collection('receipts').doc(), { ts: TS.now(), by: S.me.name, items: out });
+  b.commit().catch(e => note('Saqlanmadi: ' + e.message));
+  S.rc = null; rcSave(); fill();
+}
+function editReceipt(id) {
+  const r = S.receipts.find(x => x.id === id); if (!r) return;
+  const items = (r.items || []).map(i => ({ ...i })), orig = (r.items || []).map(i => ({ ...i }));
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:98';
+  d.innerHTML = '<div id="es" class="card" style="width:100%;margin:0;max-height:92%;overflow-y:auto;border-radius:16px 16px 0 0"></div>';
+  const ghost = 'style="background:var(--card);color:var(--ink);border:1px solid var(--line)"', ref = db.collection('receipts').doc(id);
+  const fd = r.ts && r.ts.toDate ? r.ts.toDate().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const render = () => {
+    d.querySelector('#es').innerHTML = `<div class="between" style="margin-bottom:10px"><b style="font-size:18px">Kirim · ${fd}</b><button class="btn sm ghost" data-x="1" style="color:var(--ink)">Yopish</button></div>`
+      + `<div class="card">${items.map((i, k) => `<div class="between" style="margin-bottom:8px"><b>${esc(i.name)}</b><div class="qty"><button data-m="-" data-k="${k}">−</button><input class="qi" type="number" inputmode="numeric" value="${i.qty}" data-q="${k}"><button data-m="+" data-k="${k}">+</button></div></div>`).join('') || '<div class="empty">Tovar yo\'q.</div>'}<button class="btn sm" data-add="1" ${ghost}>+ Tovar qo'shish</button></div>`
+      + `<div class="row" style="position:sticky;bottom:0;background:var(--card);padding-top:8px"><button class="btn bad" data-del="1">O'chirish</button><button class="btn" data-save="1" ${items.length ? '' : 'disabled'}>Saqlash</button></div>`;
+  };
+  const apply = (list, remove) => {
+    const old = {}, nw = {}; orig.forEach(i => old[i.id] = (old[i.id] || 0) + i.qty); list.forEach(i => nw[i.id] = (nw[i.id] || 0) + i.qty);
+    const b = db.batch();
+    if (remove) b.delete(ref); else b.update(ref, { items: list, edited: true, editedBy: S.me.name, editedAt: TS.now() });
+    new Set(Object.keys(old).concat(Object.keys(nw))).forEach(pid => { const dl = (nw[pid] || 0) - (old[pid] || 0); if (dl && S.products.some(p => p.id === pid)) b.update(db.collection('products').doc(pid), { stock: FV.increment(dl) }); });
+    b.commit().catch(e => note('Saqlanmadi: ' + e.message)); d.remove();
+  };
+  d.onclick = e => {
+    const t = e.target; if (t === d || t.dataset.x) return d.remove();
+    if (t.dataset.save) return apply(items, false);
+    if (t.dataset.del) return ask("Kirim o'chirilsinmi? Sklad qoldig'i ham shu miqdorga kamayadi.", () => apply([], true));
+    if (t.dataset.m) { const i = items[+t.dataset.k]; i.qty += t.dataset.m === '+' ? 1 : -1; if (i.qty <= 0) items.splice(+t.dataset.k, 1); return render(); }
+    if (t.dataset.add) return pickList('Tovar tanlang', S.products.map(p => ({ id: p.id, name: p.name, sub: 'Qoldiq: ' + (p.stock || 0) })), pid => { const p = S.products.find(x => x.id === pid), ex = items.find(i => i.id === pid); if (!p) return; if (ex) ex.qty++; else items.push({ id: pid, name: p.name, qty: 1 }); render(); });
+  };
+  d.onchange = e => { const t = e.target; if (t.dataset.q != null && t.dataset.q !== '') { const k = +t.dataset.q, v = Math.floor(+t.value); if (v > 0) items[k].qty = v; else items.splice(k, 1); render(); } };
+  document.body.appendChild(d); render();
 }
 function pickList(title, rows, cb) {
   const d = document.createElement('div');
@@ -498,7 +564,11 @@ function fill() {
   }
   if (t === 'tov') {
     const o = '<option value="">Kategoriyasiz</option>' + S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''), pc = g('pc'), pv = pc.value; pc.innerHTML = o; pc.value = pv;
-    const ks = g('ks'), kv = ks.value; ks.innerHTML = S.products.map(p => `<option value="${p.id}">${esc(p.name)} (${p.stock || 0})</option>`).join(''); ks.value = kv;
+    rcSave();
+    const rr = S.rc, tq = rr ? rr.items.reduce((s, i) => s + i.qty, 0) : 0, gb = 'style="background:var(--card);color:var(--ink);border:1px solid var(--line)"', fd = ts => ts && ts.toDate ? ts.toDate().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    H('rc', !rr ? '<button class="btn" data-a="rcnew">+ Yangi kirim ochish</button>' : `<div class="card"><div class="between"><b>Yangi kirim</b><span class="mute">saqlanmagan</span></div>${rr.items.length ? rr.items.map((i, k) => `<div class="between" style="margin-top:8px"><div><b>${esc(i.name)}</b>${i.isNew ? ' <small class="mute">(yangi tovar · ' + money(i.price) + ')</small>' : ''}</div><div class="qty"><button data-a="rcm" data-id="${k}">−</button><input class="qi" type="number" inputmode="numeric" value="${i.qty}" data-rq="${k}"><button data-a="rcp" data-id="${k}">+</button></div></div>`).join('') : '<div class="mute" style="margin:8px 0">Hali tovar qo\'shilmagan.</div>'}<div class="row" style="margin-top:10px"><button class="btn sm" data-a="rcadd" ${gb}>+ Mavjud tovar</button><button class="btn sm" data-a="rcnewp" ${gb}>+ Yangi tovar</button></div><div class="mute" style="margin-top:10px">${rr.items.length} tur · ${tq} dona</div><div class="row" style="margin-top:8px"><button class="btn" data-a="rccancel" ${gb}>Bekor qilish</button><button class="btn" data-a="rcsave" ${rr.items.length ? '' : 'disabled'}>Saqlash</button></div></div>`);
+    document.querySelectorAll('[data-rq]').forEach(i => i.onchange = () => { const v = Math.floor(+i.value), k = +i.dataset.rq; if (v > 0) S.rc.items[k].qty = v; else S.rc.items.splice(k, 1); fill(); });
+    H('rh', '<h2>Kirim tarixi</h2>' + (S.receipts.length ? S.receipts.map(x => `<div class="card"><div class="between"><b>${fd(x.ts)}</b><span class="mute">${esc(x.by || '')}${x.edited ? ' · tahrirlangan' : ''}</span></div><div class="mute" style="margin:6px 0">${(x.items || []).map(i => esc(i.name) + ' × ' + i.qty).join(', ')}</div>${S.me.role === 'admin' ? `<button class="btn sm" data-a="redit" data-id="${x.id}">Tahrirlash</button>` : ''}</div>`).join('') : '<div class="mute">Kirim hali yo\'q.</div>'));
     H('cl', S.cats.map(c => `<span class="between" style="margin-bottom:6px">${esc(c.name)}${del('cats', c.id)}</span>`).join('') || '<span class="mute">Kategoriya yo\'q.</span>');
     H('pl', S.products.map(p => `<div class="card"><div class="between"><div class="row" style="flex:none">${p.img ? `<img class="th" src="${p.img}" alt="">` : ''}<div><b>${esc(p.name)}</b><div class="mute">${money(p.price)} · tannarx ${money(p.cost)}</div></div></div><div class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><button class="btn sm" data-a="edit" data-id="${p.id}">Tahrirlash</button>${del('products', p.id)}</div></div>`).join('') || '<div class="empty">Tovar yo\'q.</div>');
   }
