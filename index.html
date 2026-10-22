@@ -82,12 +82,12 @@ const db = firebase.firestore(), auth = firebase.auth(), FV = firebase.firestore
 try { db.settings({ experimentalForceLongPolling: true }); } catch (e) { console.warn(e); }
 const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rj) => setTimeout(() => rj(new Error(label + ' javob bermadi (internetni tekshiring)')), ms))]);
 const S = { contacts: [], notes: [], debtSales: [], debtPays: [], wages: [], shiftList: [], contact: '', me: null, products: [], cats: [], tables: [], orders: [], sales: [], expenses: [], users: [], cart: {}, table: null, orderId: null, pm: ['naqd'], pa: {}, cat: '', day: today(), tab: '', edit: null, img: '', editTable: null, orderSig: '', dirty: false, hday: today(), hist: null, dpDay: [], xm: 'xarajat', xc: '', xp: 'naqd' };
-const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['stol','Stol'],['kon','Kontakt'],['xar',"To'lov"],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['xar',"To'lov"],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
+const TABS = { admin: [['kassa','Kassa'],['tov','Tovar'],['sklad','Sklad'],['stol','Stol'],['kon','Kontakt'],['xar',"To'lov"],['hisob','Hisobot'],['tarix','Tarix'],['esl','Eslatma'],['xod','Xodim']], kassir: [['kassa','Kassa'],['sklad','Sklad'],['xar',"To'lov"],['tarix','Tarix']], ofitsant: [['zakaz','Zakaz']], boss: [['hisob','Statistika']] };
 let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v35</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v36</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -161,6 +161,7 @@ function showTab(t) {
     stol: `<h2 id="th">Stollar</h2><div class="card"><div class="row"><input id="tn" placeholder="Stol raqami yoki nomi" style="margin:0"><button class="btn sm" id="tb2">Qo'shish</button><button class="btn sm ghost" id="tc" hidden>Bekor</button></div></div><div id="tl"></div>`,
     xar: `<h2>To'lov</h2><div class="card"><div id="xf"></div><input id="en" placeholder="Nima uchun"><input id="ea" type="number" inputmode="decimal" placeholder="Summa"><button class="btn" id="eb">Qo'shish</button></div><div id="el"></div>`,
     hisob: `<h2>Hisobot</h2><input id="rd" type="date" value="${S.day}"><div id="rb"></div>`,
+    sklad: `<h2>Sklad</h2><input id="skq" placeholder="Qidirish..."><div id="skl"></div>`,
     tarix: `<h2>Tarix</h2><input id="td" type="date" value="${S.hday}"><div id="tr"></div>`,
     kon: `<h2>Yangi kontakt</h2><div class="card"><input id="kn" placeholder="Ismi"><input id="kp" type="tel" placeholder="Telefon raqami"><select id="kt"><option value="mijoz">Mijoz</option><option value="ishchi">Ishchi</option></select><button class="btn" id="kb2">Qo'shish</button></div><div id="kl"></div>`,
     esl: `<h2>Eslatma</h2><div class="card"><input id="nt" placeholder="Masalan: ertaga go'sht olaman"><input id="nd" type="date"><button class="btn" id="nb">Qo'shish</button></div><div id="nl"></div>`,
@@ -179,6 +180,7 @@ function bind(t) {
   if (t === 'xar') b('eb', addEntry);
   if (t === 'hisob') $('#rd').onchange = e => { S.day = e.target.value || today(); listenDay(); };
   if (t === 'xod') b('xb', addStaff);
+  if (t === 'sklad') $('#skq').oninput = fill;
   if (t === 'tarix') { $('#td').onchange = e => { S.hday = e.target.value || today(); loadHist(); }; loadHist(); }
   if (t === 'kon') b('kb2', async () => { const n = val('kn'); if (!n) return note('Ismini kiriting.'); await db.collection('contacts').add({ name: n, phone: val('kp'), type: $('#kt').value }); $('#kn').value = ''; $('#kp').value = ''; });
   if (t === 'esl') b('nb', async () => { const n = val('nt'); if (!n) return; await db.collection('notes').add({ text: n, date: $('#nd').value, done: false, ts: TS.now() }); $('#nt').value = ''; $('#nd').value = ''; });
@@ -486,6 +488,13 @@ function fill() {
         + (h.canc.length ? '<h2>Bekor qilingan zakazlar</h2>' + h.canc.map(o => `<div class="card"><div class="between"><b>${esc(tl(o.table))}</b><span class="mute">${hm(o.ts)} · ${esc(o.waiter || '')}</span></div><div class="mute" style="margin:6px 0">${line(o.items)}</div><b class="neg">${money(o.total)}</b></div>`).join('') : '')
         : '<div class="empty">Bu kunda savdo yo\'q.</div>');
     }
+  }
+  if (t === 'sklad') {
+    const q = (g('skq').value || '').trim().toLowerCase(), ps = S.products.filter(p => !q || p.name.toLowerCase().includes(q)).sort((a, b) => String(a.name).localeCompare(String(b.name))), st = p => p.stock || 0;
+    const grp = (title, list) => list.length ? `<div class="mute" style="margin:12px 0 6px">${esc(title)}</div>` + list.map(p => `<div class="card between" style="padding:10px 14px"><span>${esc(p.name)}</span><b class="${st(p) <= 0 ? 'neg' : ''}">${st(p)}</b></div>`).join('') : '';
+    const known = new Set(S.cats.map(c => c.id));
+    H('skl', `<div class="card between"><span>Jami tovar turi</span><b>${S.products.length}</b></div><div class="card between"><span>Tugagan (0 yoki kam)</span><b class="${S.products.some(p => st(p) <= 0) ? 'neg' : ''}">${S.products.filter(p => st(p) <= 0).length}</b></div>`
+      + (S.cats.map(c => grp(c.name, ps.filter(p => p.cat === c.id))).join('') + grp(S.cats.length ? 'Boshqa' : 'Tovarlar', ps.filter(p => !known.has(p.cat))) || '<div class="empty">Tovar topilmadi.</div>'));
   }
   if (t === 'tov') {
     const o = '<option value="">Kategoriyasiz</option>' + S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''), pc = g('pc'), pv = pc.value; pc.innerHTML = o; pc.value = pv;
