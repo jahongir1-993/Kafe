@@ -87,7 +87,7 @@ let unsubs = [], dayUnsubs = [];
 
 function loginScreen(msg) {
   $('#nav').innerHTML = '';
-  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v34</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
+  view.innerHTML = `<div class="login"><h2>Caffee POS <small class="mute">v35</small></h2><div class="card"><input id="lg" placeholder="Login" autocapitalize="none" autocomplete="username"><input id="pw" type="password" placeholder="Parol" autocomplete="current-password"><button class="btn" id="lgb">Kirish</button><p class="mute" id="lm">${esc(msg || '')}</p></div></div>`;
   $('#lgb').onclick = doLogin; $('#pw').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 }
 const errMsg = c => /too-many/.test(c) ? "Juda ko'p urinish bo'ldi. 15-30 daqiqa kutib, keyin bir marta urinib ko'ring." : /network/.test(c) ? "Internet yo'q yoki aloqa uzildi." : /operation-not-allowed|configuration/.test(c) ? "Firebase'da Email/Password yoqilmagan." : "Login yoki parol noto'g'ri.";
@@ -227,6 +227,7 @@ function click(e) {
   if (a === 'add') { const p = S.products.find(x => x.id === id); S.cart[id] = (S.cart[id] || 0) + 1; S.dirty = true; fill(); }
   else if (a === 'minus') { if (--S.cart[id] <= 0) delete S.cart[id]; S.dirty = true; fill(); }
   else if (a === 'plus') { S.cart[id]++; S.dirty = true; fill(); }
+  else if (a === 'sedit') editSale(id);
   else if (a === 'cartopen') { S.cartOpen = !S.cartOpen; fill(); }
   else if (a === 'cat') { S.cat = id; fill(); const e = $('#catv'); if (e) e.scrollIntoView({ block: 'start' }); }
   else if (a === 'tbl') { const tb = S.tables.find(x => x.id === id), o = tb && S.orders.find(x => x.table === tb.name); if (o) return loadOrder(o.id, S.me.role === 'ofitsant' && !S.orderId); if (S.orderId) S.cart = {}; S.table = id; S.orderId = null; fill(); }
@@ -274,6 +275,66 @@ function sendOrder() {
   if (ex) { const m = {}; ex.items.concat(it).forEach(i => { m[i.id] = m[i.id] ? { ...m[i.id], qty: m[i.id].qty + i.qty } : { ...i }; }); const all = Object.values(m); db.collection('orders').doc(ex.id).update({ items: all, total: sum(all) }).catch(fail); }
   else db.collection('orders').add({ table: sab ? nextSaboy() : tb.name, takeaway: sab, items: it, total: sum(it), waiter: S.me.name, uid: S.me.id, status: 'open', ts: TS.now() }).catch(fail);
   leaveTable();
+}
+function pickList(title, rows, cb) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:99';
+  d.innerHTML = `<div class="card" style="width:100%;margin:0;max-height:80%;display:flex;flex-direction:column;border-radius:16px 16px 0 0"><div class="between" style="margin-bottom:8px"><b style="font-size:18px">${esc(title)}</b><button class="btn sm ghost" data-x="1" style="color:var(--ink)">Yopish</button></div><input id="pls" placeholder="Qidirish..." style="margin-bottom:8px"><div id="pll" style="overflow-y:auto;flex:1"></div></div>`;
+  const draw = () => { const q = d.querySelector('#pls').value.trim().toLowerCase(); d.querySelector('#pll').innerHTML = rows.filter(r => !q || r.name.toLowerCase().includes(q)).map(r => `<button class="tbc" data-id="${r.id}" style="width:100%;margin-bottom:8px;min-height:0"><b style="font-size:17px">${esc(r.name)}</b><small>${esc(r.sub || '')}</small></button>`).join('') || '<div class="empty">Topilmadi.</div>'; };
+  d.onclick = e => { if (e.target === d || e.target.dataset.x) return d.remove(); const b = e.target.closest('[data-id]'); if (b) { d.remove(); cb(b.dataset.id); } };
+  d.querySelector('#pls').oninput = draw; document.body.appendChild(d); draw();
+}
+function editSale(key) {
+  const g = (S.hg || {})[key]; if (!g) return;
+  const st = { docs: g.pays, group: g.group || g.id, ts: g.ts, where: g.where || '', waiter: g.waiter || '', cashier: g.cashier || '', items: (g.items || []).map(i => ({ ...i })), orig: (g.items || []).map(i => ({ ...i })), pm: [], pa: {}, contact: '', mix: false };
+  g.pays.slice().sort((a, b) => (a.part || 0) - (b.part || 0)).forEach(x => { if (!st.pm.includes(x.pay)) st.pm.push(x.pay); st.pa[x.pay] = (st.pa[x.pay] || 0) + x.total; if (x.pay === 'qarz' && x.contactId) st.contact = x.contactId; });
+  if (!st.pm.length) st.pm = ['naqd']; st.mix = st.pm.length > 1;
+  const tot = () => st.items.reduce((s, i) => s + i.qty * i.price, 0), cap = x => x[0].toUpperCase() + x.slice(1);
+  const amts = () => { const P = st.pm, total = tot(); if (P.length < 2) return { list: [[P[0], total]], over: false }; const out = []; let sum = 0; P.slice(0, -1).forEach(m => { const a = Math.max(0, Math.round(st.pa[m] || 0)); out.push([m, a]); sum += a; }); out.push([P[P.length - 1], Math.max(0, total - sum)]); return { list: out, over: total - sum < 0 }; };
+  const tog = m => { const P = st.pm; if (P.includes(m)) { if (P.length > 1) { st.pm = P.filter(x => x !== m); delete st.pa[m]; } return; } const cur = amts().list; st.pa = {}; cur.forEach(e => st.pa[e[0]] = e[1]); P.push(m); };
+  const setAmt = (m, v) => { const P = st.pm, n = P.length, total = tot(); if (n < 2) return; if (P.indexOf(m) === n - 1) { const rest = P.slice(0, n - 2).reduce((s, k) => s + (st.pa[k] || 0), 0); st.pa[P[n - 2]] = Math.max(0, total - rest - v); } else st.pa[m] = v; };
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:98';
+  d.innerHTML = '<div id="es" class="card" style="width:100%;margin:0;max-height:92%;overflow-y:auto;border-radius:16px 16px 0 0"></div>';
+  const ghost = 'style="background:var(--card);color:var(--ink);border:1px solid var(--line)"';
+  const render = () => {
+    const total = tot(), pa = amts(), cn = (S.contacts.find(c => c.id === st.contact) || {}).name || '', hasQ = st.pm.includes('qarz');
+    d.querySelector('#es').innerHTML = `<div class="between" style="margin-bottom:10px"><b style="font-size:18px">${esc(st.where)} · tahrirlash</b><button class="btn sm ghost" data-x="1" style="color:var(--ink)">Yopish</button></div>`
+      + `<div class="card">${st.items.map((i, k) => `<div class="between" style="margin-bottom:8px"><div><b>${esc(i.name)}</b><div class="mute">${money(i.price)} × ${i.qty} = ${money(i.price * i.qty)}</div></div><div class="qty"><button data-m="-" data-k="${k}">−</button><input class="qi" type="number" inputmode="numeric" value="${i.qty}" data-q="${k}"><button data-m="+" data-k="${k}">+</button></div></div>`).join('') || '<div class="empty">Ovqat yo\'q.</div>'}<button class="btn sm" data-add="1" ${ghost}>+ Ovqat qo'shish</button></div>`
+      + `<div class="card"><div class="mute" style="margin-bottom:6px">To'lov turi</div><div class="seg">${['naqd', 'karta', 'terminal', 'qarz', 'aralash'].map(x => `<button data-p="${x}" style="font-size:14px;padding:10px 2px" class="${(x === 'aralash' ? st.mix : st.pm.includes(x)) ? 'on' : ''}">${cap(x)}</button>`).join('')}</div>`
+      + (st.pm.length > 1 ? st.pm.map((m, i) => `<div class="between" style="margin-top:8px"><span>${cap(m)}</span><input class="qi" style="width:150px" type="number" inputmode="numeric" value="${pa.list[i][1]}" data-pm="${m}"></div>`).join('') + (pa.over ? '<div class="neg" style="margin-top:6px">Summa jamidan oshib ketdi</div>' : '') : '')
+      + (hasQ ? `<button class="btn" data-cp="1" style="margin-top:8px;background:var(--card);color:var(--ink);border:1px solid var(--line)">${cn ? 'Kontakt: ' + esc(cn) + ' ▸' : 'Kontaktni tanlang ▸'}</button>` : '')
+      + `<div class="between" style="margin-top:10px"><span>Jami</span><span class="big">${money(total)}</span></div></div>`
+      + `<div class="row" style="position:sticky;bottom:0;background:var(--card);padding-top:8px"><button class="btn" data-x="1" ${ghost}>Bekor</button><button class="btn" data-save="1" ${!st.items.length || pa.over ? 'disabled' : ''}>Saqlash</button></div>`;
+  };
+  const save = () => {
+    const total = tot(), pa = amts();
+    if (!st.items.length) return note("Ovqat yo'q.");
+    if (pa.over) return note('Summalar jamidan oshib ketdi.');
+    const parts = pa.list.filter(e => e[1] > 0); if (!parts.length) parts.push([st.pm[0], 0]);
+    if (parts.some(e => e[0] === 'qarz') && !st.contact) return note('Qarz uchun kontaktni tanlang.');
+    const cn = (S.contacts.find(c => c.id === st.contact) || {}).name || '', b = db.batch();
+    st.docs.forEach(x => b.delete(db.collection('sales').doc(x.id)));
+    parts.forEach((e, k) => b.set(db.collection('sales').doc(), { ts: st.ts, items: k ? [] : st.items, total: e[1], pay: e[0], group: st.group, part: k, where: st.where, waiter: st.waiter, cashier: st.cashier, contactId: e[0] === 'qarz' ? st.contact : '', contactName: e[0] === 'qarz' ? cn : '', edited: true, editedBy: S.me.name, editedAt: TS.now() }));
+    const old = {}, nw = {}; st.orig.forEach(i => old[i.id] = (old[i.id] || 0) + i.qty); st.items.forEach(i => nw[i.id] = (nw[i.id] || 0) + i.qty);
+    new Set(Object.keys(old).concat(Object.keys(nw))).forEach(id => { const dl = (old[id] || 0) - (nw[id] || 0); if (dl && S.products.some(p => p.id === id)) b.update(db.collection('products').doc(id), { stock: FV.increment(dl) }); });
+    b.commit().then(() => loadHist()).catch(e => note('Saqlanmadi: ' + e.message));
+    d.remove();
+  };
+  d.onclick = e => {
+    const t = e.target; if (t === d || t.dataset.x) return d.remove();
+    if (t.dataset.save) return save();
+    if (t.dataset.m) { const i = st.items[+t.dataset.k]; i.qty += t.dataset.m === '+' ? 1 : -1; if (i.qty <= 0) st.items.splice(+t.dataset.k, 1); return render(); }
+    if (t.dataset.add) return pickList('Ovqat tanlang', S.products.map(p => ({ id: p.id, name: p.name, sub: money(p.price) })), id => { const p = S.products.find(x => x.id === id), ex = st.items.find(i => i.id === id); if (!p) return; if (ex) ex.qty++; else st.items.push({ id, name: p.name, qty: 1, price: p.price, cost: p.cost || 0 }); render(); });
+    if (t.dataset.cp) return pickContact(S.contacts, c => { st.contact = c; render(); });
+    if (t.dataset.p) { const x = t.dataset.p; if (x === 'aralash') { st.mix = !st.mix; if (!st.mix) { st.pm = [st.pm[0]]; st.pa = {}; } } else if (st.mix) tog(x); else { st.pm = [x]; st.pa = {}; } render(); }
+  };
+  d.onchange = e => {
+    const t = e.target;
+    if (t.dataset.q != null && t.dataset.q !== '') { const k = +t.dataset.q, v = Math.floor(+t.value); if (v > 0) st.items[k].qty = v; else st.items.splice(k, 1); render(); }
+    else if (t.dataset.pm) { setAmt(t.dataset.pm, Math.max(0, Math.round(+t.value || 0))); render(); }
+  };
+  document.body.appendChild(d); render();
 }
 function pickContact(list, cb) {
   const d = document.createElement('div');
@@ -416,12 +477,12 @@ function fill() {
     if (!h) H('tr', '<div class="empty">Yuklanmoqda...</div>');
     else if (h.err) H('tr', `<div class="card neg">Xato: ${esc(h.err)}</div>`);
     else {
-      const gm = {}; h.sales.forEach(x => { const k = x.group || x.id, g = gm[k] || (gm[k] = { ...x, total: 0, pays: [], items: [] }); g.total += x.total; g.pays.push(x); if (x.items && x.items.length) g.items = x.items; }); const groups = Object.values(gm), tot = h.sales.reduce((s, x) => s + x.total, 0), by = {}, agg = {};
+      const gm = {}; h.sales.forEach(x => { const k = x.group || x.id, g = gm[k] || (gm[k] = { ...x, total: 0, pays: [], items: [] }); g.total += x.total; g.pays.push(x); if (x.items && x.items.length) g.items = x.items; }); S.hg = gm; const groups = Object.values(gm), tot = h.sales.reduce((s, x) => s + x.total, 0), by = {}, agg = {};
       h.sales.forEach(x => { by[x.pay] = (by[x.pay] || 0) + x.total; (x.items || []).forEach(i => { const a = agg[i.name] || (agg[i.name] = { q: 0, s: 0 }); a.q += i.qty; a.s += i.qty * i.price; }); });
       const names = Object.keys(agg).sort((x, y) => agg[y].q - agg[x].q);
       H('tr', h.sales.length || h.canc.length ? `<div class="card"><div class="between"><span>Jami savdo</span><b class="big">${money(tot)}</b></div><div class="mute" style="margin-top:6px">${groups.length} ta savdo</div>${Object.keys(by).map(k => `<div class="between" style="margin-top:6px"><span>${cap(k)}</span><b>${money(by[k])}</b></div>`).join('')}</div>`
         + (names.length ? '<h2>Nimalar sotilgan</h2><div class="card">' + names.map(n => `<div class="between" style="margin-bottom:6px"><span>${esc(n)} × ${agg[n].q}</span><b>${money(agg[n].s)}</b></div>`).join('') + '</div>' : '')
-        + (groups.length ? '<h2>Savdolar</h2>' + groups.map(x => `<div class="card"><div class="between"><b>${esc(x.where || '')}</b><span class="mute">${hm(x.ts)}</span></div><div class="mute" style="margin:6px 0">${line(x.items)}</div><div style="margin-bottom:6px">${x.pays.map(p => cap(p.pay) + ' ' + money(p.total) + (p.contactName ? ' (' + esc(p.contactName) + ')' : '')).join(' + ')}</div><div class="between"><b>${money(x.total)}</b><span class="mute">${x.waiter ? 'Ofitsant: ' + esc(x.waiter) + ' · ' : ''}Kassir: ${esc(x.cashier || '')}</span></div></div>`).join('') : '')
+        + (groups.length ? '<h2>Savdolar</h2>' + groups.map(x => `<div class="card"><div class="between"><b>${esc(x.where || '')}</b><span class="mute">${hm(x.ts)}${x.pays.some(p => p.edited) ? ' · tahrirlangan' : ''}</span></div><div class="mute" style="margin:6px 0">${line(x.items)}</div>${S.me.role === 'admin' ? `<button class="btn sm" data-a="sedit" data-id="${x.group || x.id}" style="margin-bottom:8px">Tahrirlash</button>` : ''}<div style="margin-bottom:6px">${x.pays.map(p => cap(p.pay) + ' ' + money(p.total) + (p.contactName ? ' (' + esc(p.contactName) + ')' : '')).join(' + ')}</div><div class="between"><b>${money(x.total)}</b><span class="mute">${x.waiter ? 'Ofitsant: ' + esc(x.waiter) + ' · ' : ''}Kassir: ${esc(x.cashier || '')}</span></div></div>`).join('') : '')
         + (h.canc.length ? '<h2>Bekor qilingan zakazlar</h2>' + h.canc.map(o => `<div class="card"><div class="between"><b>${esc(tl(o.table))}</b><span class="mute">${hm(o.ts)} · ${esc(o.waiter || '')}</span></div><div class="mute" style="margin:6px 0">${line(o.items)}</div><b class="neg">${money(o.total)}</b></div>`).join('') : '')
         : '<div class="empty">Bu kunda savdo yo\'q.</div>');
     }
