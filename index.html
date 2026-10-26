@@ -341,6 +341,7 @@ function click(e) {
   else if (a === 'rcnewp') newProductDlg(i => { S.rc.items.push(i); fill(); });
   else if (a === 'rcsave') saveReceipt();
   else if (a === 'redit') editReceipt(id);
+  else if (a === 'rhopen') openRH();
   else if (a === 'chist') openKH(id);
   else if (a === 'chback') { S.kh = null; fill(); }
   else if (a === 'ccopy') copyKH();
@@ -422,8 +423,44 @@ function saveReceipt() {
   b.commit().catch(e => note('Saqlanmadi: ' + e.message));
   S.rc = null; rcSave(); fill();
 }
+function openRH() {
+  S.rhMore = []; S.rhDay = null; S.rhEnd = false;
+  const d = document.createElement('div'); d.id = 'rhov';
+  d.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:60;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 28px';
+  d.innerHTML = '<div class="between" style="margin-bottom:12px;gap:10px;justify-content:flex-start"><button class="btn sm ghost" data-rhb="1">← Orqaga</button><b style="font-size:20px">Kirim tarixi</b></div><div class="row" style="gap:6px"><input id="rhd" type="date"><input id="rhq" placeholder="Tovar nomi..."></div><div id="rhl"></div>';
+  document.body.appendChild(d);
+  d.onclick = e => { const t = e.target; if (t.dataset.rhb) { d.remove(); S.rhOpen = false; } else if (t.dataset.rhedit) editReceipt(t.dataset.rhedit); else if (t.dataset.rhmore) loadMoreRH(); else if (t.dataset.rhclr) { d.querySelector('#rhd').value = ''; renderRH(); } };
+  d.querySelector('#rhd').onchange = e => rhDay(e.target.value);
+  d.querySelector('#rhq').oninput = () => renderRH();
+  S.rhOpen = true; renderRH();
+}
+function rhDay(date) {
+  if (!date) return renderRH();
+  S.rhDay = { date, list: null }; renderRH();
+  const a = new Date(date + 'T00:00:00'), b = new Date(a.getTime() + 864e5);
+  db.collection('receipts').where('ts', '>=', a).where('ts', '<', b).orderBy('ts', 'desc').get()
+    .then(sn => { S.rhDay = { date, list: sn.docs.map(x => ({ id: x.id, ...x.data() })) }; renderRH(); })
+    .catch(e => { S.rhDay = { date, list: [] }; renderRH(); note('Yuklanmadi: ' + e.message); });
+}
+function loadMoreRH() {
+  const all = S.receipts.concat(S.rhMore || []), last = all[all.length - 1]; if (!last || !last.ts) return;
+  db.collection('receipts').orderBy('ts', 'desc').startAfter(last.ts).limit(60).get()
+    .then(sn => { S.rhMore = (S.rhMore || []).concat(sn.docs.map(x => ({ id: x.id, ...x.data() }))); if (sn.docs.length < 60) S.rhEnd = true; renderRH(); })
+    .catch(e => note('Yuklanmadi: ' + e.message));
+}
+function renderRH() {
+  const o = document.getElementById('rhov'); if (!o) return;
+  const day = o.querySelector('#rhd').value, q = o.querySelector('#rhq').value.trim().toLowerCase(), L = o.querySelector('#rhl');
+  let list = day ? (S.rhDay && S.rhDay.date === day ? S.rhDay.list : null) : S.receipts.concat(S.rhMore || []);
+  if (list === null) { L.innerHTML = '<div class="mute" style="margin-top:14px">Yuklanmoqda...</div>'; return; }
+  if (q) list = list.filter(x => (x.items || []).some(i => String(i.name).toLowerCase().includes(q)));
+  const fdt = ts => ts && ts.toDate ? ts.toDate().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '', tq = x => (x.items || []).reduce((s, i) => s + (i.qty || 0), 0);
+  L.innerHTML = `<div class="mute" style="margin:10px 0">${day ? day + ' · ' : ''}${list.length} ta kirim · jami ${list.reduce((s, x) => s + tq(x), 0)} dona${day ? ' <button class="btn sm ghost" data-rhclr="1" style="margin-left:6px">Hammasi</button>' : ''}</div>`
+    + (list.map(x => `<div class="card"><div class="between"><b>${fdt(x.ts)}</b><span class="mute">${esc(x.by || '')}${x.edited ? ' · tahrirlangan' : ''}</span></div><div class="mute" style="margin:6px 0">${(x.items || []).map(i => esc(i.name) + ' × ' + i.qty).join(', ')}</div><div class="between"><span class="mute">Jami: ${tq(x)} dona</span>${S.me.role === 'admin' ? `<button class="btn sm" data-rhedit="${x.id}">Tahrirlash</button>` : ''}</div></div>`).join('') || '<div class="mute" style="margin-top:14px">Kirim topilmadi.</div>')
+    + (!day && !q && !S.rhEnd && S.receipts.length >= 60 ? '<button class="btn" data-rhmore="1" style="margin-top:8px">Eskilarini yuklash</button>' : '');
+}
 function editReceipt(id) {
-  const r = S.receipts.find(x => x.id === id); if (!r) return;
+  const r = S.receipts.find(x => x.id === id) || (S.rhMore || []).find(x => x.id === id) || ((S.rhDay && S.rhDay.list) || []).find(x => x.id === id); if (!r) return;
   const items = (r.items || []).map(i => ({ ...i })), orig = (r.items || []).map(i => ({ ...i }));
   const d = document.createElement('div');
   d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;z-index:98';
@@ -733,7 +770,7 @@ function fill() {
     const rr = S.rc, tq = rr ? rr.items.reduce((s, i) => s + i.qty, 0) : 0, gb = 'style="background:var(--card);color:var(--ink);border:1px solid var(--line)"', fd = ts => ts && ts.toDate ? ts.toDate().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
     H('rc', !rr ? '<button class="btn" data-a="rcnew">+ Yangi kirim ochish</button>' : `<div class="card"><div class="between"><b>Yangi kirim</b><span class="mute">saqlanmagan</span></div>${rr.items.length ? rr.items.map((i, k) => `<div class="between" style="margin-top:8px"><div><b>${esc(i.name)}</b>${i.isNew ? ' <small class="mute">(yangi tovar · ' + money(i.price) + ')</small>' : ''}</div><div class="qty"><button data-a="rcm" data-id="${k}">−</button><input class="qi" type="number" inputmode="numeric" value="${i.qty}" data-rq="${k}"><button data-a="rcp" data-id="${k}">+</button></div></div>`).join('') : '<div class="mute" style="margin:8px 0">Hali tovar qo\'shilmagan.</div>'}<div class="row" style="margin-top:10px"><button class="btn sm" data-a="rcadd" ${gb}>+ Mavjud tovar</button><button class="btn sm" data-a="rcnewp" ${gb}>+ Yangi tovar</button></div><div class="mute" style="margin-top:10px">${rr.items.length} tur · ${tq} dona</div><div class="row" style="margin-top:8px"><button class="btn" data-a="rccancel" ${gb}>Bekor qilish</button><button class="btn" data-a="rcsave" ${rr.items.length ? '' : 'disabled'}>Saqlash</button></div></div>`);
     document.querySelectorAll('[data-rq]').forEach(i => i.onchange = () => { const v = Math.floor(+i.value), k = +i.dataset.rq; if (v > 0) S.rc.items[k].qty = v; else S.rc.items.splice(k, 1); fill(); });
-    H('rh', '<h2>Kirim tarixi</h2>' + (S.receipts.length ? S.receipts.map(x => `<div class="card"><div class="between"><b>${fd(x.ts)}</b><span class="mute">${esc(x.by || '')}${x.edited ? ' · tahrirlangan' : ''}</span></div><div class="mute" style="margin:6px 0">${(x.items || []).map(i => esc(i.name) + ' × ' + i.qty).join(', ')}</div>${S.me.role === 'admin' ? `<button class="btn sm" data-a="redit" data-id="${x.id}">Tahrirlash</button>` : ''}</div>`).join('') : '<div class="mute">Kirim hali yo\'q.</div>'));
+    H('rh', `<button class="btn" data-a="rhopen" style="background:var(--card);color:var(--ink);border:1px solid var(--line);text-align:left;margin-top:8px">Kirim tarixi · ${S.receipts.length ? 'oxirgisi ' + fd(S.receipts[0].ts) : 'hali yo\'q'} →</button>`); if (S.rhOpen) renderRH();
     H('cl', S.cats.map(c => `<span class="between" style="margin-bottom:6px">${esc(c.name)}${del('cats', c.id)}</span>`).join('') || '<span class="mute">Kategoriya yo\'q.</span>');
     H('pl', S.products.map(p => `<div class="card"><div class="between"><div class="row" style="flex:none">${p.img ? `<img class="th" src="${p.img}" alt="">` : ''}<div><b>${esc(p.name)}</b><div class="mute">${money(p.price)} · tannarx ${money(p.cost)}</div></div></div><div class="${(p.stock || 0) <= 5 ? 'low' : ''}">${p.stock || 0} ta</div></div><div class="row" style="margin-top:8px"><button class="btn sm" data-a="edit" data-id="${p.id}">Tahrirlash</button>${del('products', p.id)}</div></div>`).join('') || '<div class="empty">Tovar yo\'q.</div>');
   }
