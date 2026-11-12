@@ -342,6 +342,7 @@ function click(e) {
   else if (a === 'rcsave') saveReceipt();
   else if (a === 'redit') editReceipt(id);
   else if (a === 'rhopen') openRH();
+  else if (a === 'sprod') openProdHist(id);
   else if (a === 'chist') openKH(id);
   else if (a === 'chback') { S.kh = null; fill(); }
   else if (a === 'ccopy') copyKH();
@@ -422,6 +423,53 @@ function saveReceipt() {
   b.set(db.collection('receipts').doc(), { ts: TS.now(), by: S.me.name, items: out });
   b.commit().catch(e => note('Saqlanmadi: ' + e.message));
   S.rc = null; rcSave(); fill();
+}
+function openProdHist(pid) {
+  const p = S.products.find(x => x.id === pid); if (!p) return;
+  const fm = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'), n = new Date(), f = new Date(n); f.setDate(f.getDate() - 29);
+  const d = document.createElement('div'); d.id = 'phov';
+  d.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:60;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 28px';
+  d.innerHTML = `<div class="between" style="margin-bottom:6px;gap:10px;justify-content:flex-start"><button class="btn sm ghost" data-phb="1">← Orqaga</button><b style="font-size:20px;min-width:0">${esc(p.name)}</b></div><div class="mute" style="margin-bottom:10px">Qoldiq: <b>${p.stock || 0}</b> · Sotish narxi: ${money(p.price)}</div><div class="row" style="gap:6px"><input id="phd1" type="date" value="${fm(f)}"><input id="phd2" type="date" value="${fm(n)}"></div><div class="seg" style="margin:8px 0"><button data-phr="today">Bugun</button><button data-phr="week">7 kun</button><button data-phr="m30">30 kun</button><button data-phr="month">Shu oy</button><button data-phr="all">Hammasi</button></div><div id="phl"></div>`;
+  document.body.appendChild(d);
+  const load = () => loadPH(pid);
+  d.onclick = e => { const t = e.target.closest('[data-phb],[data-phr]'); if (!t) return;
+    if (t.dataset.phb) return d.remove();
+    const r = t.dataset.phr, a = new Date(), b = new Date(a);
+    if (r === 'all') { d.querySelector('#phd1').value = ''; d.querySelector('#phd2').value = ''; }
+    else { if (r === 'week') a.setDate(a.getDate() - 6); else if (r === 'm30') a.setDate(a.getDate() - 29); else if (r === 'month') a.setDate(1); d.querySelector('#phd1').value = fm(a); d.querySelector('#phd2').value = fm(b); }
+    load(); };
+  d.querySelector('#phd1').onchange = load; d.querySelector('#phd2').onchange = load;
+  load();
+}
+function loadPH(pid) {
+  const o = document.getElementById('phov'); if (!o) return;
+  const d1 = o.querySelector('#phd1').value, d2 = o.querySelector('#phd2').value, L = o.querySelector('#phl'), key = d1 + '|' + d2;
+  S.phCache = S.phCache || {};
+  if (S.phCache[key]) return renderPH(pid, S.phCache[key]);
+  L.innerHTML = '<div class="mute" style="margin-top:14px">Yuklanmoqda...</div>';
+  let q = db.collection('sales');
+  if (d1) { const a = new Date(d1 + 'T00:00:00'), b = new Date((d2 ? new Date(d2 + 'T00:00:00') : a).getTime() + 864e5); q = q.where('ts', '>=', a).where('ts', '<', b); }
+  q.orderBy('ts', 'desc').limit(3000).get()
+    .then(sn => { S.phCache[key] = sn.docs.map(x => ({ id: x.id, ...x.data() })); if (document.getElementById('phov') && o.querySelector('#phd1').value + '|' + o.querySelector('#phd2').value === key) renderPH(pid, S.phCache[key]); })
+    .catch(e => { L.innerHTML = ''; note('Yuklanmadi: ' + e.message); });
+}
+function renderPH(pid, list) {
+  const o = document.getElementById('phov'); if (!o) return;
+  const p = S.products.find(x => x.id === pid) || {}, L = o.querySelector('#phl'), rows = [];
+  list.forEach(x => (x.items || []).forEach(i => { if (i.id === pid) rows.push({ x, i }); }));
+  const cap = v => v ? v[0].toUpperCase() + v.slice(1) : '', dk = x => x.ts && x.ts.toDate ? x.ts.toDate().toLocaleDateString('ru-RU') : '', tm = x => x.ts && x.ts.toDate ? x.ts.toDate().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+  const paid = rows.filter(r => r.x.pay !== 'kafe'), kafe = rows.filter(r => r.x.pay === 'kafe');
+  const qty = a => a.reduce((s, r) => s + r.i.qty, 0), rev = paid.reduce((s, r) => s + r.i.qty * r.i.price, 0), cost = paid.reduce((s, r) => s + r.i.qty * (r.i.cost || 0), 0);
+  let html = `<div class="card"><div class="between"><span class="mute">Sotilgan</span><b>${qty(paid)} dona</b></div><div class="between"><span class="mute">Tushum</span><b>${money(rev)}</b></div><div class="between"><span class="mute">Foyda (narx − tannarx)</span><b class="${rev - cost >= 0 ? 'pos' : 'neg'}">${money(rev - cost)}</b></div>${kafe.length ? `<div class="between"><span class="mute">Kafe uchun</span><b>${qty(kafe)} dona</b></div>` : ''}<div class="between"><span class="mute">Savdolar soni</span><span>${rows.length}</span></div></div>`;
+  let last = '';
+  rows.forEach(r => {
+    const dd = dk(r.x);
+    if (dd !== last) { last = dd; const day = rows.filter(y => dk(y.x) === dd); html += `<div class="between" style="margin:12px 0 6px"><b>${dd}</b><span class="mute" style="font-size:13px">${qty(day)} dona</span></div>`; }
+    html += `<div class="card between" style="padding:10px 14px"><div><b>${r.i.qty} dona × ${money(r.i.price)}</b><div class="mute" style="font-size:13px">${tm(r.x)} · ${cap(r.x.pay)} · ${esc(tl(r.x.where || 'Savdo'))}${r.x.contactName ? ' · ' + esc(r.x.contactName) : ''}</div></div><b>${r.x.pay === 'kafe' ? 'Kafe' : money(r.i.qty * r.i.price)}</b></div>`;
+  });
+  if (!rows.length) html += '<div class="mute" style="margin-top:14px">Bu davrda sotuv bo\'lmagan.</div>';
+  if (list.length >= 3000) html += '<div class="mute" style="margin-top:10px;font-size:13px">Eng oxirgi 3000 ta savdo tekshirildi. Davrni qisqartiring.</div>';
+  L.innerHTML = html;
 }
 function openRH() {
   S.rhMore = []; S.rhDay = null; S.rhEnd = false;
@@ -759,7 +807,7 @@ function fill() {
   }
   if (t === 'sklad') {
     const q = (g('skq').value || '').trim().toLowerCase(), ps = S.products.filter(p => !q || p.name.toLowerCase().includes(q)).sort((a, b) => String(a.name).localeCompare(String(b.name))), st = p => p.stock || 0;
-    const grp = (title, list) => list.length ? `<div class="mute" style="margin:12px 0 6px">${esc(title)}</div>` + list.map(p => `<div class="card between" style="padding:10px 14px"><span>${esc(p.name)}</span><b class="${st(p) <= 0 ? 'neg' : ''}">${st(p)}</b></div>`).join('') : '';
+    const grp = (title, list) => list.length ? `<div class="mute" style="margin:12px 0 6px">${esc(title)}</div>` + list.map(p => `<div class="card between" data-a="sprod" data-id="${p.id}" style="padding:10px 14px;cursor:pointer"><span>${esc(p.name)}</span><span><b class="${st(p) <= 0 ? 'neg' : ''}">${st(p)}</b> <span class="mute">›</span></span></div>`).join('') : '';
     const known = new Set(S.cats.map(c => c.id));
     H('skl', `<div class="card between"><span>Jami tovar turi</span><b>${S.products.length}</b></div><div class="card between"><span>Tugagan (0 yoki kam)</span><b class="${S.products.some(p => st(p) <= 0) ? 'neg' : ''}">${S.products.filter(p => st(p) <= 0).length}</b></div>`
       + (S.cats.map(c => grp(c.name, ps.filter(p => p.cat === c.id))).join('') + grp(S.cats.length ? 'Boshqa' : 'Tovarlar', ps.filter(p => !known.has(p.cat))) || '<div class="empty">Tovar topilmadi.</div>'));
